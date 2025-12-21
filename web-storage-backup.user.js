@@ -427,186 +427,238 @@
     GM_registerMenuCommand('👁️ Xem Storage', handleView);
     GM_registerMenuCommand('🗑️ Xóa Storage', handleClear);
 
-    // ==================== NÚT KÉO THẢ ====================
+   // ==================== NÚT KÉO THẢ ====================
 
-    function createFloatingUI() {
-        // Tạo style
-        const style = document.createElement('style');
-        style.textContent = `
-            #sb-float-btn {
-                position: fixed;
-                width: 42px;
-                height: 42px;
-                background: linear-gradient(135deg, #667eea, #764ba2);
-                border: none;
-                border-radius: 50%;
-                color: white;
-                font-size: 18px;
-                cursor: grab;
-                z-index: 2147483647;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                touch-action: none;
-                user-select: none;
-            }
-            #sb-float-btn:active { cursor: grabbing; }
-            #sb-float-btn.dragging { opacity: 0.7; transform: scale(1.1); }
+function createFloatingUI() {
+    const style = document.createElement('style');
+    style.textContent = `
+        #sb-float-btn {
+            position: fixed;
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 18px;
+            cursor: grab;
+            z-index: 2147483647;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+            user-select: none;
+        }
+        #sb-float-btn:active { cursor: grabbing; }
+        #sb-float-btn.dragging { opacity: 0.7; transform: scale(1.1); }
 
-            #sb-menu {
-                position: fixed;
-                background: #1e1e2e;
-                border-radius: 12px;
-                padding: 6px;
-                z-index: 2147483646;
-                box-shadow: 0 5px 25px rgba(0,0,0,0.4);
-                display: none;
-                min-width: 160px;
-            }
-            #sb-menu.show { display: block; }
+        #sb-menu {
+            position: fixed;
+            background: #1e1e2e;
+            border-radius: 12px;
+            padding: 6px;
+            z-index: 2147483646;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.4);
+            display: none;
+            min-width: 180px;
+        }
+        #sb-menu.show { display: block; }
 
-            #sb-menu button {
-                display: block;
-                width: 100%;
-                padding: 10px 12px;
-                margin: 3px 0;
-                background: #2d2d3d;
-                border: none;
-                border-radius: 8px;
-                color: white;
-                font-size: 13px;
-                text-align: left;
-                cursor: pointer;
-                transition: background 0.15s;
-            }
-            #sb-menu button:hover { background: #3d3d5d; }
-            #sb-menu button:active { background: #4d4d6d; }
+        #sb-menu button {
+            display: block;
+            width: 100%;
+            padding: 10px 12px;
+            margin: 3px 0;
+            background: #2d2d3d;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 13px;
+            text-align: left;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        #sb-menu button:hover { background: #3d3d5d; }
+        #sb-menu button:active { background: #4d4d6d; }
 
-            #sb-menu .divider {
-                height: 1px;
-                background: #3d3d5d;
-                margin: 6px 0;
-            }
-        `;
-        document.head.appendChild(style);
+        #sb-menu .divider {
+            height: 1px;
+            background: #3d3d5d;
+            margin: 6px 0;
+        }
+    `;
+    document.head.appendChild(style);
 
-        // Tạo nút
-        const btn = document.createElement('button');
-        btn.id = 'sb-float-btn';
-        btn.textContent = '💾';
-        document.body.appendChild(btn);
+    const btn = document.createElement('button');
+    btn.id = 'sb-float-btn';
+    btn.textContent = '💾';
+    document.body.appendChild(btn);
 
-        // Tạo menu
-        const menu = document.createElement('div');
-        menu.id = 'sb-menu';
+    const menu = document.createElement('div');
+    menu.id = 'sb-menu';
 
-        const menuItems = [
-            { icon: '📤', text: 'Xuất JSON', action: handleExportJSON },
-            { icon: '🗜️', text: 'Xuất Nén', action: handleExportCompressed },
-            { icon: '📦', text: 'Xuất localStorage', action: handleExportLocalStorage },
-            { icon: '🍪', text: 'Xuất Cookies', action: handleExportCookies },
-            { divider: true },
-            { icon: '📥', text: 'Nhập Storage', action: handleImport },
-            { divider: true },
-            { icon: '👁️', text: 'Xem Storage', action: handleView },
-            { icon: '🗑️', text: 'Xóa Storage', action: handleClear }
-        ];
+    const menuItems = [
+        { icon: '📤', text: 'Xuất JSON', action: handleExportJSON },
+        { icon: '🗜️', text: 'Xuất Nén', action: handleExportCompressed },
+        { icon: '📦', text: 'Xuất localStorage', action: handleExportLocalStorage },
+        { icon: '🍪', text: 'Xuất Cookies', action: handleExportCookies },
+        { divider: true },
+        { icon: '📥', text: 'Nhập Storage', action: handleImport },
+        { divider: true },
+        { icon: '👁️', text: 'Xem Storage', action: handleView },
+        { icon: '🗑️', text: 'Xóa Storage', action: handleClear }
+    ];
 
-        menuItems.forEach(item => {
-            if (item.divider) {
-                const div = document.createElement('div');
-                div.className = 'divider';
-                menu.appendChild(div);
-            } else {
-                const menuBtn = document.createElement('button');
-                menuBtn.textContent = `${item.icon} ${item.text}`;
-                menuBtn.onclick = () => {
-                    menu.classList.remove('show');
-                    item.action();
-                };
-                menu.appendChild(menuBtn);
-            }
-        });
-
-        document.body.appendChild(menu);
-
-        // ===== DRAG & DROP =====
-        let isDragging = false;
-        let hasMoved = false;
-        let startX, startY, startLeft, startTop;
-
-        // Load vị trí đã lưu
-        const savedPos = GM_getValue('sb_btn_pos', null);
-        if (savedPos) {
-            btn.style.left = savedPos.left + 'px';
-            btn.style.top = savedPos.top + 'px';
+    menuItems.forEach(item => {
+        if (item.divider) {
+            const div = document.createElement('div');
+            div.className = 'divider';
+            menu.appendChild(div);
         } else {
-            btn.style.right = '15px';
-            btn.style.bottom = '80px';
+            const menuBtn = document.createElement('button');
+            menuBtn.textContent = `${item.icon} ${item.text}`;
+            menuBtn.onclick = () => {
+                menu.classList.remove('show');
+                item.action();
+            };
+            menu.appendChild(menuBtn);
+        }
+    });
+
+    document.body.appendChild(menu);
+
+    // ===== DRAG & DROP (SỬA CHO ĐIỆN THOẠI) =====
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+    let totalMoved = 0;
+    let startTime = 0;
+
+    const MOVE_THRESHOLD = 10; // Phải di chuyển > 10px mới tính là kéo
+    const TAP_TIME = 200; // Nhấn < 200ms tính là tap
+
+    const savedPos = GM_getValue('sb_btn_pos', null);
+    if (savedPos) {
+        btn.style.left = savedPos.left + 'px';
+        btn.style.top = savedPos.top + 'px';
+    } else {
+        btn.style.right = '15px';
+        btn.style.bottom = '80px';
+    }
+
+    function onStart(e) {
+        isDragging = true;
+        totalMoved = 0;
+        startTime = Date.now();
+        btn.classList.add('dragging');
+
+        const touch = e.touches ? e.touches[0] : e;
+        startX = touch.clientX;
+        startY = touch.clientY;
+
+        const rect = btn.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        e.preventDefault();
+    }
+
+    function onMove(e) {
+        if (!isDragging) return;
+
+        const touch = e.touches ? e.touches[0] : e;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+
+        // Tính tổng quãng đường di chuyển
+        totalMoved = Math.sqrt(dx * dx + dy * dy);
+
+        let newLeft = startLeft + dx;
+        let newTop = startTop + dy;
+
+        newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 42));
+        newTop = Math.max(0, Math.min(newTop, window.innerHeight - 42));
+
+        btn.style.left = newLeft + 'px';
+        btn.style.top = newTop + 'px';
+        btn.style.right = 'auto';
+        btn.style.bottom = 'auto';
+
+        e.preventDefault();
+    }
+
+    function onEnd(e) {
+        if (!isDragging) return;
+
+        const elapsed = Date.now() - startTime;
+        const wasDragged = totalMoved > MOVE_THRESHOLD;
+        const wasTap = elapsed < TAP_TIME && !wasDragged;
+
+        isDragging = false;
+        btn.classList.remove('dragging');
+
+        // Lưu vị trí
+        const rect = btn.getBoundingClientRect();
+        GM_setValue('sb_btn_pos', { left: rect.left, top: rect.top });
+
+        // Nếu là tap (nhấn nhanh, không kéo) → mở menu
+        if (wasTap) {
+            toggleMenu();
+        }
+    }
+
+    function toggleMenu() {
+        if (menu.classList.contains('show')) {
+            menu.classList.remove('show');
+            return;
         }
 
-        function onStart(e) {
-            isDragging = true;
-            hasMoved = false;
-            btn.classList.add('dragging');
+        const rect = btn.getBoundingClientRect();
+        let left = rect.left;
+        let top = rect.bottom + 8;
 
-            const touch = e.touches ? e.touches[0] : e;
-            startX = touch.clientX;
-            startY = touch.clientY;
-
-            const rect = btn.getBoundingClientRect();
-            startLeft = rect.left;
-            startTop = rect.top;
-
-            e.preventDefault();
+        if (left + 180 > window.innerWidth) {
+            left = window.innerWidth - 190;
         }
-
-        function onMove(e) {
-            if (!isDragging) return;
-
-            const touch = e.touches ? e.touches[0] : e;
-            const dx = touch.clientX - startX;
-            const dy = touch.clientY - startY;
-
-            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-                hasMoved = true;
-            }
-
-            let newLeft = startLeft + dx;
-            let newTop = startTop + dy;
-
-            // Giới hạn trong màn hình
-            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 42));
-            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 42));
-
-            btn.style.left = newLeft + 'px';
-            btn.style.top = newTop + 'px';
-            btn.style.right = 'auto';
-            btn.style.bottom = 'auto';
-
-            e.preventDefault();
+        if (top + 350 > window.innerHeight) {
+            top = rect.top - 360;
         }
+        if (left < 10) left = 10;
+        if (top < 10) top = 10;
 
-        function onEnd() {
-            if (!isDragging) return;
-            isDragging = false;
-            btn.classList.remove('dragging');
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        menu.classList.add('show');
+    }
 
-            // Lưu vị trí
-            const rect = btn.getBoundingClientRect();
-            GM_setValue('sb_btn_pos', { left: rect.left, top: rect.top });
+    // Mouse events
+    btn.addEventListener('mousedown', onStart);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+
+    // Touch events
+    btn.addEventListener('touchstart', onStart, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+
+    // Click cho máy tính (backup)
+    btn.addEventListener('click', (e) => {
+        // Chỉ xử lý nếu không phải touch device
+        if (!('ontouchstart' in window)) {
+            toggleMenu();
         }
+    });
 
-        // Mouse
-        btn.addEventListener('mousedown', onStart);
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onEnd);
+    // Đóng menu khi click ra ngoài
+    document.addEventListener('click', (e) => {
+        if (!btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.classList.remove('show');
+        }
+    });
 
-        // Touch
-        btn.addEventListener('touchstart', onStart, { passive: false });
-        document.addEventListener('touchmove', onMove, { passive: false });
-        document.addEventListener('touchend', onEnd);
+    document.addEventListener('touchstart', (e) => {
+        if (!btn.contains(e.target) && !menu.contains(e.target)) {
+            menu.classList.remove('show');
 
         // ===== SHOW MENU =====
         btn.addEventListener('click', () => {
