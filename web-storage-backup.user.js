@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Web Storage Backup & Restore
-// @namespace    https://github.com/YourUsername/web-storage-backup
-// @version      2.2
-// @description  Xuất/Nhập localStorage, cookies, IndexedDB với nút kéo thả
+// @namespace    https://github.com/LCK307/web-storage-backup
+// @version      3.0
+// @description  Xuất/Nhập localStorage, cookies, IndexedDB với giao diện tab
 // @author       Your Name
 // @match        *://*/*
 // @grant        GM_setClipboard
@@ -20,51 +20,54 @@
     // ==================== EXPORT FUNCTIONS ====================
 
     function exportLocalStorage() {
-        const data = {};
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        var data = {};
+        for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
             data[key] = localStorage.getItem(key);
         }
         return data;
     }
 
     function exportSessionStorage() {
-        const data = {};
-        for (let i = 0; i < sessionStorage.length; i++) {
-            const key = sessionStorage.key(i);
+        var data = {};
+        for (var i = 0; i < sessionStorage.length; i++) {
+            var key = sessionStorage.key(i);
             data[key] = sessionStorage.getItem(key);
         }
         return data;
     }
 
     function exportCookies() {
-        const cookies = {};
-        document.cookie.split(';').forEach(cookie => {
-            const parts = cookie.trim().split('=');
-            const name = parts[0];
-            const value = parts.slice(1).join('=');
-            if (name) {
+        var cookies = {};
+        var parts = document.cookie.split(';');
+        for (var i = 0; i < parts.length; i++) {
+            var cookie = parts[i].trim();
+            var eqPos = cookie.indexOf('=');
+            if (eqPos > 0) {
+                var name = cookie.substring(0, eqPos);
+                var value = cookie.substring(eqPos + 1);
                 cookies[name] = value;
             }
-        });
+        }
         return cookies;
     }
 
     async function exportIndexedDB() {
         if (!indexedDB.databases) return {};
-        
-        try {
-            const databases = await indexedDB.databases();
-            const result = {};
 
-            for (const dbInfo of databases) {
+        try {
+            var databases = await indexedDB.databases();
+            var result = {};
+
+            for (var i = 0; i < databases.length; i++) {
+                var dbInfo = databases[i];
                 if (!dbInfo.name) continue;
 
                 try {
-                    const db = await new Promise((resolve, reject) => {
-                        const request = indexedDB.open(dbInfo.name);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
+                    var db = await new Promise(function(resolve, reject) {
+                        var request = indexedDB.open(dbInfo.name);
+                        request.onsuccess = function() { resolve(request.result); };
+                        request.onerror = function() { reject(request.error); };
                     });
 
                     result[dbInfo.name] = {
@@ -72,16 +75,17 @@
                         stores: {}
                     };
 
-                    const storeNames = Array.from(db.objectStoreNames);
+                    var storeNames = Array.from(db.objectStoreNames);
 
-                    for (const storeName of storeNames) {
+                    for (var j = 0; j < storeNames.length; j++) {
+                        var storeName = storeNames[j];
                         try {
-                            const tx = db.transaction(storeName, 'readonly');
-                            const store = tx.objectStore(storeName);
-                            const data = await new Promise((resolve, reject) => {
-                                const request = store.getAll();
-                                request.onsuccess = () => resolve(request.result);
-                                request.onerror = () => reject(request.error);
+                            var tx = db.transaction(storeName, 'readonly');
+                            var store = tx.objectStore(storeName);
+                            var data = await new Promise(function(resolve, reject) {
+                                var request = store.getAll();
+                                request.onsuccess = function() { resolve(request.result); };
+                                request.onerror = function() { reject(request.error); };
                             });
                             result[dbInfo.name].stores[storeName] = data;
                         } catch (e) {}
@@ -98,7 +102,7 @@
     }
 
     async function exportAll() {
-        const data = {
+        var data = {
             _meta: {
                 url: window.location.origin,
                 hostname: window.location.hostname,
@@ -113,21 +117,12 @@
         return JSON.stringify(data, null, 2);
     }
 
-    async function exportCompressed() {
-        const data = await exportAll();
-        try {
-            return btoa(unescape(encodeURIComponent(data)));
-        } catch (e) {
-            return data;
-        }
-    }
-
     // ==================== IMPORT FUNCTIONS ====================
 
     function importLocalStorage(data) {
         if (!data || typeof data !== 'object') return 0;
-        let count = 0;
-        for (const key in data) {
+        var count = 0;
+        for (var key in data) {
             try {
                 localStorage.setItem(key, data[key]);
                 count++;
@@ -138,8 +133,8 @@
 
     function importSessionStorage(data) {
         if (!data || typeof data !== 'object') return 0;
-        let count = 0;
-        for (const key in data) {
+        var count = 0;
+        for (var key in data) {
             try {
                 sessionStorage.setItem(key, data[key]);
                 count++;
@@ -150,10 +145,10 @@
 
     function importCookies(data) {
         if (!data || typeof data !== 'object') return 0;
-        let count = 0;
-        for (const name in data) {
+        var count = 0;
+        for (var name in data) {
             try {
-                const expires = new Date();
+                var expires = new Date();
                 expires.setFullYear(expires.getFullYear() + 1);
                 document.cookie = name + '=' + data[name] + '; expires=' + expires.toUTCString() + '; path=/';
                 count++;
@@ -164,51 +159,51 @@
 
     async function importIndexedDB(data) {
         if (!data || typeof data !== 'object') return 0;
-        let count = 0;
+        var count = 0;
 
-        for (const dbName in data) {
-            const dbData = data[dbName];
+        for (var dbName in data) {
+            var dbData = data[dbName];
             try {
-                await new Promise((resolve) => {
-                    const deleteRequest = indexedDB.deleteDatabase(dbName);
+                await new Promise(function(resolve) {
+                    var deleteRequest = indexedDB.deleteDatabase(dbName);
                     deleteRequest.onsuccess = resolve;
                     deleteRequest.onerror = resolve;
                     deleteRequest.onblocked = resolve;
                 });
 
-                const db = await new Promise((resolve, reject) => {
-                    const request = indexedDB.open(dbName, dbData.version || 1);
+                var db = await new Promise(function(resolve, reject) {
+                    var request = indexedDB.open(dbName, dbData.version || 1);
 
-                    request.onupgradeneeded = (event) => {
-                        const database = event.target.result;
-                        const stores = dbData.stores || {};
-                        for (const storeName in stores) {
+                    request.onupgradeneeded = function(event) {
+                        var database = event.target.result;
+                        var stores = dbData.stores || {};
+                        for (var storeName in stores) {
                             if (!database.objectStoreNames.contains(storeName)) {
                                 database.createObjectStore(storeName, { autoIncrement: true });
                             }
                         }
                     };
 
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
+                    request.onsuccess = function() { resolve(request.result); };
+                    request.onerror = function() { reject(request.error); };
                 });
 
-                const stores = dbData.stores || {};
-                for (const storeName in stores) {
+                var stores = dbData.stores || {};
+                for (var storeName in stores) {
                     if (!db.objectStoreNames.contains(storeName)) continue;
 
-                    const tx = db.transaction(storeName, 'readwrite');
-                    const store = tx.objectStore(storeName);
-                    const storeData = stores[storeName];
+                    var tx = db.transaction(storeName, 'readwrite');
+                    var store = tx.objectStore(storeName);
+                    var storeData = stores[storeName];
 
-                    for (let i = 0; i < storeData.length; i++) {
+                    for (var i = 0; i < storeData.length; i++) {
                         try {
                             store.add(storeData[i]);
                             count++;
                         } catch (e) {}
                     }
 
-                    await new Promise((resolve) => {
+                    await new Promise(function(resolve) {
                         tx.oncomplete = resolve;
                         tx.onerror = resolve;
                     });
@@ -221,160 +216,49 @@
         return count;
     }
 
-    async function importFromData(input) {
-        try {
-            let data;
+    // ==================== FILE FUNCTIONS ====================
 
-            try {
-                const decoded = decodeURIComponent(escape(atob(input)));
-                data = JSON.parse(decoded);
-            } catch (e) {
-                data = JSON.parse(input);
-            }
-
-            if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
-                if (!window.confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
-                    return { success: false, error: 'Người dùng hủy' };
-                }
-            }
-
-            const results = {
-                localStorage: importLocalStorage(data.localStorage),
-                sessionStorage: importSessionStorage(data.sessionStorage),
-                cookies: importCookies(data.cookies),
-                indexedDB: await importIndexedDB(data.indexedDB)
-            };
-
-            return {
-                success: true,
-                results: results,
-                total: results.localStorage + results.sessionStorage + results.cookies + results.indexedDB
-            };
-        } catch (e) {
-            return { success: false, error: e.message };
-        }
+    function downloadFile(content, filename) {
+        var blob = new Blob([content], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
-    // ==================== ACTION HANDLERS ====================
-
-    async function handleExportJSON() {
-        try {
-            const data = await exportAll();
-            GM_setClipboard(data);
-
-            const parsed = JSON.parse(data);
-            const ls = Object.keys(parsed.localStorage || {}).length;
-            const ss = Object.keys(parsed.sessionStorage || {}).length;
-            const ck = Object.keys(parsed.cookies || {}).length;
-            const idb = Object.keys(parsed.indexedDB || {}).length;
-
-            alert('Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\nindexedDB: ' + idb);
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
+    function readFile(file) {
+        return new Promise(function(resolve, reject) {
+            var reader = new FileReader();
+            reader.onload = function(e) { resolve(e.target.result); };
+            reader.onerror = function() { reject(new Error('Không đọc được file')); };
+            reader.readAsText(file);
+        });
     }
 
-    async function handleExportCompressed() {
-        try {
-            const data = await exportCompressed();
-            GM_setClipboard(data);
-            alert('Đã copy dạng nén!\n\nKích thước: ' + (data.length / 1024).toFixed(1) + ' KB');
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
+    // ==================== UI ====================
 
-    function handleExportLocalStorage() {
-        const data = JSON.stringify(exportLocalStorage(), null, 2);
-        GM_setClipboard(data);
-        alert('Đã copy localStorage (' + Object.keys(JSON.parse(data)).length + ' keys)');
-    }
+    var panel = null;
+    var overlay = null;
+    var currentTab = 'export';
 
-    function handleExportCookies() {
-        const data = JSON.stringify(exportCookies(), null, 2);
-        GM_setClipboard(data);
-        alert('Đã copy cookies (' + Object.keys(JSON.parse(data)).length + ')');
-    }
-
-    async function handleImport() {
-        const input = prompt('Dán dữ liệu storage (JSON hoặc nén):');
-        if (!input) return;
-
-        const result = await importFromData(input.trim());
-
-        if (result.success) {
-            if (confirm('Nhập thành công! ' + result.total + ' items\n\nReload trang?')) {
-                location.reload();
-            }
-        } else {
-            alert('Lỗi: ' + result.error);
-        }
-    }
-
-    function handleView() {
-        const ls = localStorage.length;
-        const ss = sessionStorage.length;
-        const ck = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
-
-        alert('STORAGE: ' + window.location.hostname + '\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck);
-    }
-
-    function handleClear() {
-        const choice = prompt('Nhập số:\n1 - Xóa localStorage\n2 - Xóa sessionStorage\n3 - Xóa cookies\n4 - Xóa TẤT CẢ\n0 - Hủy');
-
-        if (choice === '1') {
-            localStorage.clear();
-            alert('Đã xóa localStorage');
-        } else if (choice === '2') {
-            sessionStorage.clear();
-            alert('Đã xóa sessionStorage');
-        } else if (choice === '3') {
-            var cookies = document.cookie.split(';');
-            for (var i = 0; i < cookies.length; i++) {
-                var name = cookies[i].split('=')[0].trim();
-                document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-            }
-            alert('Đã xóa cookies');
-        } else if (choice === '4') {
-            if (confirm('Xóa TẤT CẢ storage?')) {
-                localStorage.clear();
-                sessionStorage.clear();
-                var cookies = document.cookie.split(';');
-                for (var i = 0; i < cookies.length; i++) {
-                    var name = cookies[i].split('=')[0].trim();
-                    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-                }
-                alert('Đã xóa tất cả!');
-            }
-        }
-    }
-
-    // ==================== MENU COMMANDS ====================
-
-    GM_registerMenuCommand('📤 Xuất JSON', handleExportJSON);
-    GM_registerMenuCommand('🗜️ Xuất Nén', handleExportCompressed);
-    GM_registerMenuCommand('📦 Xuất localStorage', handleExportLocalStorage);
-    GM_registerMenuCommand('🍪 Xuất Cookies', handleExportCookies);
-    GM_registerMenuCommand('📥 Nhập Storage', handleImport);
-    GM_registerMenuCommand('👁️ Xem Storage', handleView);
-    GM_registerMenuCommand('🗑️ Xóa Storage', handleClear);
-
-    // ==================== FLOATING UI ====================
-
-    function createFloatingUI() {
-        // Dùng GM_addStyle thay vì appendChild style
+    function createUI() {
+        // CSS
         GM_addStyle('\
             #sb-float-btn {\
                 position: fixed;\
-                width: 44px;\
-                height: 44px;\
+                width: 46px;\
+                height: 46px;\
                 background: linear-gradient(135deg, #667eea, #764ba2);\
                 border: none;\
                 border-radius: 50%;\
                 color: white;\
-                font-size: 18px;\
+                font-size: 20px;\
                 z-index: 2147483647;\
-                box-shadow: 0 2px 12px rgba(0,0,0,0.3);\
+                box-shadow: 0 3px 15px rgba(0,0,0,0.3);\
                 display: flex;\
                 align-items: center;\
                 justify-content: center;\
@@ -387,86 +271,664 @@
                 opacity: 0.8;\
                 transform: scale(1.1);\
             }\
-            #sb-menu {\
+            #sb-overlay {\
                 position: fixed;\
-                background: #1e1e2e;\
-                border-radius: 12px;\
-                padding: 6px;\
-                z-index: 2147483646;\
-                box-shadow: 0 5px 25px rgba(0,0,0,0.5);\
+                top: 0;\
+                left: 0;\
+                right: 0;\
+                bottom: 0;\
+                background: rgba(0,0,0,0.6);\
+                z-index: 2147483640;\
                 display: none;\
-                min-width: 180px;\
             }\
-            #sb-menu.show {\
+            #sb-overlay.show {\
                 display: block;\
             }\
-            #sb-menu button {\
-                display: block;\
-                width: 100%;\
-                padding: 12px 14px;\
-                margin: 3px 0;\
-                background: #2d2d3d;\
+            #sb-panel {\
+                position: fixed;\
+                top: 50%;\
+                left: 50%;\
+                transform: translate(-50%, -50%);\
+                width: 340px;\
+                max-width: 95vw;\
+                max-height: 85vh;\
+                background: #1a1a2e;\
+                border-radius: 16px;\
+                z-index: 2147483645;\
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5);\
+                display: none;\
+                flex-direction: column;\
+                overflow: hidden;\
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;\
+            }\
+            #sb-panel.show {\
+                display: flex;\
+            }\
+            #sb-header {\
+                display: flex;\
+                justify-content: space-between;\
+                align-items: center;\
+                padding: 14px 16px;\
+                background: linear-gradient(135deg, #667eea, #764ba2);\
+                color: white;\
+            }\
+            #sb-header-title {\
+                font-size: 16px;\
+                font-weight: 600;\
+                margin: 0;\
+            }\
+            #sb-close {\
+                background: rgba(255,255,255,0.2);\
                 border: none;\
-                border-radius: 8px;\
+                color: white;\
+                width: 30px;\
+                height: 30px;\
+                border-radius: 50%;\
+                font-size: 18px;\
+                cursor: pointer;\
+                display: flex;\
+                align-items: center;\
+                justify-content: center;\
+            }\
+            #sb-tabs {\
+                display: flex;\
+                background: #16213e;\
+            }\
+            .sb-tab {\
+                flex: 1;\
+                padding: 12px;\
+                background: none;\
+                border: none;\
+                border-bottom: 3px solid transparent;\
+                color: #888;\
+                font-size: 13px;\
+                cursor: pointer;\
+                transition: all 0.2s;\
+            }\
+            .sb-tab.active {\
+                color: #667eea;\
+                border-bottom-color: #667eea;\
+                background: rgba(102, 126, 234, 0.1);\
+            }\
+            #sb-content {\
+                flex: 1;\
+                overflow-y: auto;\
+                padding: 16px;\
+                color: white;\
+            }\
+            .sb-section {\
+                margin-bottom: 16px;\
+            }\
+            .sb-section-title {\
+                font-size: 13px;\
+                color: #888;\
+                margin-bottom: 10px;\
+                display: flex;\
+                align-items: center;\
+                gap: 6px;\
+            }\
+            .sb-btn {\
+                width: 100%;\
+                padding: 12px 16px;\
+                margin: 6px 0;\
+                background: #2d3a5a;\
+                border: none;\
+                border-radius: 10px;\
                 color: white;\
                 font-size: 14px;\
-                text-align: left;\
                 cursor: pointer;\
+                display: flex;\
+                align-items: center;\
+                gap: 10px;\
+                transition: background 0.2s;\
             }\
-            #sb-menu button:active {\
-                background: #4d4d6d;\
+            .sb-btn:active {\
+                background: #3d4a7a;\
             }\
-            #sb-menu-divider {\
+            .sb-btn-primary {\
+                background: linear-gradient(135deg, #667eea, #764ba2);\
+            }\
+            .sb-btn-danger {\
+                background: #5a2d3a;\
+            }\
+            .sb-file-input {\
+                display: none;\
+            }\
+            .sb-info {\
+                background: #16213e;\
+                padding: 12px;\
+                border-radius: 10px;\
+                margin-bottom: 12px;\
+                font-size: 12px;\
+                color: #aaa;\
+            }\
+            .sb-stats {\
+                display: grid;\
+                grid-template-columns: repeat(3, 1fr);\
+                gap: 8px;\
+                margin-bottom: 16px;\
+            }\
+            .sb-stat {\
+                background: #16213e;\
+                padding: 10px;\
+                border-radius: 10px;\
+                text-align: center;\
+            }\
+            .sb-stat-value {\
+                font-size: 18px;\
+                font-weight: bold;\
+                color: #667eea;\
+            }\
+            .sb-stat-label {\
+                font-size: 10px;\
+                color: #888;\
+                margin-top: 2px;\
+            }\
+            .sb-divider {\
                 height: 1px;\
-                background: #3d3d5d;\
-                margin: 6px 0;\
+                background: #2d3a5a;\
+                margin: 16px 0;\
+            }\
+            .sb-toast {\
+                position: fixed;\
+                bottom: 100px;\
+                left: 50%;\
+                transform: translateX(-50%);\
+                background: #333;\
+                color: white;\
+                padding: 12px 24px;\
+                border-radius: 10px;\
+                z-index: 2147483650;\
+                font-size: 14px;\
+                display: none;\
+            }\
+            .sb-toast.show {\
+                display: block;\
+            }\
+            .sb-toast.success {\
+                background: #2d5a3a;\
+            }\
+            .sb-toast.error {\
+                background: #5a2d3a;\
             }\
         ');
 
-        // Tạo button bằng DOM API
+        // Floating Button
         var btn = document.createElement('button');
         btn.id = 'sb-float-btn';
         btn.textContent = '💾';
-
-        // Tạo menu bằng DOM API
-        var menu = document.createElement('div');
-        menu.id = 'sb-menu';
-
-        var menuData = [
-            { text: '📤 Xuất JSON', action: handleExportJSON },
-            { text: '🗜️ Xuất Nén', action: handleExportCompressed },
-            { text: '📦 Xuất localStorage', action: handleExportLocalStorage },
-            { text: '🍪 Xuất Cookies', action: handleExportCookies },
-            { divider: true },
-            { text: '📥 Nhập Storage', action: handleImport },
-            { divider: true },
-            { text: '👁️ Xem Storage', action: handleView },
-            { text: '🗑️ Xóa Storage', action: handleClear }
-        ];
-
-        for (var i = 0; i < menuData.length; i++) {
-            var item = menuData[i];
-            if (item.divider) {
-                var divider = document.createElement('div');
-                divider.id = 'sb-menu-divider';
-                menu.appendChild(divider);
-            } else {
-                var menuBtn = document.createElement('button');
-                menuBtn.textContent = item.text;
-                (function(action) {
-                    menuBtn.onclick = function() {
-                        menu.classList.remove('show');
-                        action();
-                    };
-                })(item.action);
-                menu.appendChild(menuBtn);
-            }
-        }
-
         document.body.appendChild(btn);
-        document.body.appendChild(menu);
 
-        // ===== DRAG LOGIC =====
+        // Overlay
+        overlay = document.createElement('div');
+        overlay.id = 'sb-overlay';
+        document.body.appendChild(overlay);
+
+        // Panel
+        panel = document.createElement('div');
+        panel.id = 'sb-panel';
+
+        // Header
+        var header = document.createElement('div');
+        header.id = 'sb-header';
+
+        var title = document.createElement('h3');
+        title.id = 'sb-header-title';
+        title.textContent = '💾 Storage Backup';
+
+        var closeBtn = document.createElement('button');
+        closeBtn.id = 'sb-close';
+        closeBtn.textContent = '×';
+        closeBtn.onclick = hidePanel;
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        panel.appendChild(header);
+
+        // Tabs
+        var tabs = document.createElement('div');
+        tabs.id = 'sb-tabs';
+
+        var tabExport = document.createElement('button');
+        tabExport.className = 'sb-tab active';
+        tabExport.textContent = '📤 Xuất';
+        tabExport.onclick = function() { switchTab('export'); };
+
+        var tabImportSingle = document.createElement('button');
+        tabImportSingle.className = 'sb-tab';
+        tabImportSingle.textContent = '📥 Nhập Riêng';
+        tabImportSingle.onclick = function() { switchTab('import-single'); };
+
+        var tabImportAll = document.createElement('button');
+        tabImportAll.className = 'sb-tab';
+        tabImportAll.textContent = '📦 Nhập Tất Cả';
+        tabImportAll.onclick = function() { switchTab('import-all'); };
+
+        tabs.appendChild(tabExport);
+        tabs.appendChild(tabImportSingle);
+        tabs.appendChild(tabImportAll);
+        panel.appendChild(tabs);
+
+        // Content
+        var content = document.createElement('div');
+        content.id = 'sb-content';
+        panel.appendChild(content);
+
+        document.body.appendChild(panel);
+
+        // Toast
+        var toast = document.createElement('div');
+        toast.className = 'sb-toast';
+        toast.id = 'sb-toast';
+        document.body.appendChild(toast);
+
+        // Events
+        overlay.onclick = hidePanel;
+        setupDrag(btn);
+
+        // Initial render
+        renderTab('export');
+    }
+
+    function switchTab(tab) {
+        currentTab = tab;
+        var tabs = document.querySelectorAll('.sb-tab');
+        for (var i = 0; i < tabs.length; i++) {
+            tabs[i].classList.remove('active');
+        }
+        if (tab === 'export') {
+            tabs[0].classList.add('active');
+        } else if (tab === 'import-single') {
+            tabs[1].classList.add('active');
+        } else {
+            tabs[2].classList.add('active');
+        }
+        renderTab(tab);
+    }
+
+    function renderTab(tab) {
+        var content = document.getElementById('sb-content');
+        content.textContent = '';
+
+        if (tab === 'export') {
+            renderExportTab(content);
+        } else if (tab === 'import-single') {
+            renderImportSingleTab(content);
+        } else {
+            renderImportAllTab(content);
+        }
+    }
+
+    function renderExportTab(content) {
+        // Stats
+        var stats = document.createElement('div');
+        stats.className = 'sb-stats';
+
+        var lsCount = localStorage.length;
+        var ssCount = sessionStorage.length;
+        var ckCount = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
+
+        var statLS = createStat(lsCount, 'localStorage');
+        var statSS = createStat(ssCount, 'session');
+        var statCK = createStat(ckCount, 'cookies');
+
+        stats.appendChild(statLS);
+        stats.appendChild(statSS);
+        stats.appendChild(statCK);
+        content.appendChild(stats);
+
+        // Info
+        var info = document.createElement('div');
+        info.className = 'sb-info';
+        info.textContent = '📱 Trên điện thoại, nên tải file để tránh mất dữ liệu khi copy.';
+        content.appendChild(info);
+
+        // Section: Xuất Tất Cả
+        var section1 = createSection('📦 Xuất Tất Cả Storage');
+
+        var btnDownloadAll = createButton('💾 Tải File JSON (Tất Cả)', 'sb-btn-primary', async function() {
+            var data = await exportAll();
+            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename);
+            showToast('Đã tải file!', 'success');
+        });
+        section1.appendChild(btnDownloadAll);
+
+        var btnCopyAll = createButton('📋 Copy JSON (Tất Cả)', '', async function() {
+            var data = await exportAll();
+            GM_setClipboard(data);
+            showToast('Đã copy!', 'success');
+        });
+        section1.appendChild(btnCopyAll);
+
+        content.appendChild(section1);
+
+        // Divider
+        content.appendChild(createDivider());
+
+        // Section: Xuất Riêng
+        var section2 = createSection('📂 Xuất Riêng Từng Loại');
+
+        var btnDownloadLS = createButton('📦 Tải localStorage', '', function() {
+            var data = JSON.stringify(exportLocalStorage(), null, 2);
+            var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename);
+            showToast('Đã tải file!', 'success');
+        });
+        section2.appendChild(btnDownloadLS);
+
+        var btnDownloadCK = createButton('🍪 Tải Cookies', '', function() {
+            var data = JSON.stringify(exportCookies(), null, 2);
+            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename);
+            showToast('Đã tải file!', 'success');
+        });
+        section2.appendChild(btnDownloadCK);
+
+        var btnDownloadSS = createButton('📋 Tải sessionStorage', '', function() {
+            var data = JSON.stringify(exportSessionStorage(), null, 2);
+            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename);
+            showToast('Đã tải file!', 'success');
+        });
+        section2.appendChild(btnDownloadSS);
+
+        content.appendChild(section2);
+
+        // Divider
+        content.appendChild(createDivider());
+
+        // Section: Xóa
+        var section3 = createSection('🗑️ Xóa Dữ Liệu');
+
+        var btnClear = createButton('🗑️ Xóa Tất Cả Storage', 'sb-btn-danger', function() {
+            if (confirm('Xóa TẤT CẢ storage của trang này?')) {
+                localStorage.clear();
+                sessionStorage.clear();
+                var cookies = document.cookie.split(';');
+                for (var i = 0; i < cookies.length; i++) {
+                    var name = cookies[i].split('=')[0].trim();
+                    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+                }
+                showToast('Đã xóa tất cả!', 'success');
+                renderTab('export');
+            }
+        });
+        section3.appendChild(btnClear);
+
+        content.appendChild(section3);
+    }
+
+    function renderImportSingleTab(content) {
+        // Info
+        var info = document.createElement('div');
+        info.className = 'sb-info';
+        info.textContent = '📂 Chọn file JSON đã xuất từ tab "Xuất Riêng Từng Loại" để nhập.';
+        content.appendChild(info);
+
+        // Section: localStorage
+        var section1 = createSection('📦 Nhập localStorage');
+
+        var fileInputLS = document.createElement('input');
+        fileInputLS.type = 'file';
+        fileInputLS.accept = '.json,.txt';
+        fileInputLS.className = 'sb-file-input';
+        fileInputLS.id = 'sb-file-ls';
+        fileInputLS.onchange = async function(e) {
+            if (e.target.files.length > 0) {
+                try {
+                    var text = await readFile(e.target.files[0]);
+                    var data = JSON.parse(text);
+                    var count = importLocalStorage(data);
+                    showToast('Đã nhập ' + count + ' keys!', 'success');
+                    if (confirm('Reload trang để áp dụng?')) {
+                        location.reload();
+                    }
+                } catch (err) {
+                    showToast('Lỗi: ' + err.message, 'error');
+                }
+            }
+        };
+        content.appendChild(fileInputLS);
+
+        var btnImportLS = createButton('📂 Chọn File localStorage', 'sb-btn-primary', function() {
+            fileInputLS.click();
+        });
+        section1.appendChild(btnImportLS);
+
+        content.appendChild(section1);
+
+        // Divider
+        content.appendChild(createDivider());
+
+        // Section: Cookies
+        var section2 = createSection('🍪 Nhập Cookies');
+
+        var fileInputCK = document.createElement('input');
+        fileInputCK.type = 'file';
+        fileInputCK.accept = '.json,.txt';
+        fileInputCK.className = 'sb-file-input';
+        fileInputCK.id = 'sb-file-ck';
+        fileInputCK.onchange = async function(e) {
+            if (e.target.files.length > 0) {
+                try {
+                    var text = await readFile(e.target.files[0]);
+                    var data = JSON.parse(text);
+                    var count = importCookies(data);
+                    showToast('Đã nhập ' + count + ' cookies!', 'success');
+                    if (confirm('Reload trang để áp dụng?')) {
+                        location.reload();
+                    }
+                } catch (err) {
+                    showToast('Lỗi: ' + err.message, 'error');
+                }
+            }
+        };
+        content.appendChild(fileInputCK);
+
+        var btnImportCK = createButton('📂 Chọn File Cookies', 'sb-btn-primary', function() {
+            fileInputCK.click();
+        });
+        section2.appendChild(btnImportCK);
+
+        content.appendChild(section2);
+
+        // Divider
+        content.appendChild(createDivider());
+
+        // Section: sessionStorage
+        var section3 = createSection('📋 Nhập sessionStorage');
+
+        var fileInputSS = document.createElement('input');
+        fileInputSS.type = 'file';
+        fileInputSS.accept = '.json,.txt';
+        fileInputSS.className = 'sb-file-input';
+        fileInputSS.id = 'sb-file-ss';
+        fileInputSS.onchange = async function(e) {
+            if (e.target.files.length > 0) {
+                try {
+                    var text = await readFile(e.target.files[0]);
+                    var data = JSON.parse(text);
+                    var count = importSessionStorage(data);
+                    showToast('Đã nhập ' + count + ' keys!', 'success');
+                    if (confirm('Reload trang để áp dụng?')) {
+                        location.reload();
+                    }
+                } catch (err) {
+                    showToast('Lỗi: ' + err.message, 'error');
+                }
+            }
+        };
+        content.appendChild(fileInputSS);
+
+        var btnImportSS = createButton('📂 Chọn File sessionStorage', 'sb-btn-primary', function() {
+            fileInputSS.click();
+        });
+        section3.appendChild(btnImportSS);
+
+        content.appendChild(section3);
+    }
+
+    function renderImportAllTab(content) {
+        // Info
+        var info = document.createElement('div');
+        info.className = 'sb-info';
+        info.textContent = '📦 Chọn file JSON đã xuất từ "Tải File JSON (Tất Cả)" để nhập toàn bộ storage.';
+        content.appendChild(info);
+
+        // Section: Nhập từ File
+        var section1 = createSection('📂 Nhập Từ File');
+
+        var fileInputAll = document.createElement('input');
+        fileInputAll.type = 'file';
+        fileInputAll.accept = '.json,.txt';
+        fileInputAll.className = 'sb-file-input';
+        fileInputAll.id = 'sb-file-all';
+        fileInputAll.onchange = async function(e) {
+            if (e.target.files.length > 0) {
+                try {
+                    var text = await readFile(e.target.files[0]);
+                    var data = JSON.parse(text);
+
+                    if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
+                        if (!confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
+                            return;
+                        }
+                    }
+
+                    var results = {
+                        localStorage: importLocalStorage(data.localStorage),
+                        sessionStorage: importSessionStorage(data.sessionStorage),
+                        cookies: importCookies(data.cookies),
+                        indexedDB: await importIndexedDB(data.indexedDB)
+                    };
+
+                    var total = results.localStorage + results.sessionStorage + results.cookies + results.indexedDB;
+                    showToast('Đã nhập ' + total + ' items!', 'success');
+
+                    if (confirm('Reload trang để áp dụng?')) {
+                        location.reload();
+                    }
+                } catch (err) {
+                    showToast('Lỗi: ' + err.message, 'error');
+                }
+            }
+        };
+        content.appendChild(fileInputAll);
+
+        var btnImportFile = createButton('📂 Chọn File Storage', 'sb-btn-primary', function() {
+            fileInputAll.click();
+        });
+        section1.appendChild(btnImportFile);
+
+        content.appendChild(section1);
+
+        // Divider
+        content.appendChild(createDivider());
+
+        // Section: Nhập từ Text (backup)
+        var section2 = createSection('📝 Nhập Từ Text (Nếu File Không Hoạt Động)');
+
+        var btnImportText = createButton('📝 Dán Text JSON', '', function() {
+            var input = prompt('Dán dữ liệu JSON:');
+            if (!input) return;
+
+            try {
+                var data = JSON.parse(input.trim());
+
+                if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
+                    if (!confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
+                        return;
+                    }
+                }
+
+                var lsCount = importLocalStorage(data.localStorage);
+                var ssCount = importSessionStorage(data.sessionStorage);
+                var ckCount = importCookies(data.cookies);
+
+                var total = lsCount + ssCount + ckCount;
+                showToast('Đã nhập ' + total + ' items!', 'success');
+
+                if (confirm('Reload trang để áp dụng?')) {
+                    location.reload();
+                }
+            } catch (err) {
+                showToast('Lỗi: ' + err.message, 'error');
+            }
+        });
+        section2.appendChild(btnImportText);
+
+        content.appendChild(section2);
+    }
+
+    // ==================== UI HELPERS ====================
+
+    function createSection(titleText) {
+        var section = document.createElement('div');
+        section.className = 'sb-section';
+
+        var title = document.createElement('div');
+        title.className = 'sb-section-title';
+        title.textContent = titleText;
+        section.appendChild(title);
+
+        return section;
+    }
+
+    function createButton(text, extraClass, onclick) {
+        var btn = document.createElement('button');
+        btn.className = 'sb-btn' + (extraClass ? ' ' + extraClass : '');
+        btn.textContent = text;
+        btn.onclick = onclick;
+        return btn;
+    }
+
+    function createStat(value, label) {
+        var stat = document.createElement('div');
+        stat.className = 'sb-stat';
+
+        var val = document.createElement('div');
+        val.className = 'sb-stat-value';
+        val.textContent = value;
+
+        var lbl = document.createElement('div');
+        lbl.className = 'sb-stat-label';
+        lbl.textContent = label;
+
+        stat.appendChild(val);
+        stat.appendChild(lbl);
+        return stat;
+    }
+
+    function createDivider() {
+        var div = document.createElement('div');
+        div.className = 'sb-divider';
+        return div;
+    }
+
+    function showToast(message, type) {
+        var toast = document.getElementById('sb-toast');
+        toast.textContent = message;
+        toast.className = 'sb-toast show ' + (type || '');
+        setTimeout(function() {
+            toast.classList.remove('show');
+        }, 2500);
+    }
+
+    function showPanel() {
+        panel.classList.add('show');
+        overlay.classList.add('show');
+        renderTab(currentTab);
+    }
+
+    function hidePanel() {
+        panel.classList.remove('show');
+        overlay.classList.remove('show');
+    }
+
+    // ==================== DRAG ====================
+
+    function setupDrag(btn) {
         var startX = 0;
         var startY = 0;
         var startLeft = 0;
@@ -521,8 +983,8 @@
             var newLeft = startLeft + dx;
             var newTop = startTop + dy;
 
-            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 44));
-            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 44));
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 46));
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 46));
 
             btn.style.left = newLeft + 'px';
             btn.style.top = newTop + 'px';
@@ -542,55 +1004,22 @@
             GM_setValue('sb_btn_pos', { left: rect.left, top: rect.top });
 
             if (!hasDragged) {
-                toggleMenu();
+                showPanel();
             }
         }
 
-        function toggleMenu() {
-            if (menu.classList.contains('show')) {
-                menu.classList.remove('show');
-                return;
-            }
-
-            var rect = btn.getBoundingClientRect();
-            var left = rect.left;
-            var top = rect.bottom + 10;
-
-            if (left + 180 > window.innerWidth) {
-                left = window.innerWidth - 190;
-            }
-            if (left < 10) {
-                left = 10;
-            }
-            if (top + 300 > window.innerHeight) {
-                top = rect.top - 310;
-            }
-            if (top < 10) {
-                top = 10;
-            }
-
-            menu.style.left = left + 'px';
-            menu.style.top = top + 'px';
-            menu.classList.add('show');
-        }
-
-        // Touch events
         btn.addEventListener('touchstart', dragStart, { passive: false });
         document.addEventListener('touchmove', dragMove, { passive: false });
         document.addEventListener('touchend', dragEnd, { passive: false });
 
-        // Mouse events
         btn.addEventListener('mousedown', dragStart);
         document.addEventListener('mousemove', dragMove);
         document.addEventListener('mouseup', dragEnd);
-
-        // Đóng menu
-        document.addEventListener('click', function(e) {
-            if (e.target !== btn && !menu.contains(e.target)) {
-                menu.classList.remove('show');
-            }
-        });
     }
+
+    // ==================== MENU COMMANDS ====================
+
+    GM_registerMenuCommand('💾 Mở Storage Backup', showPanel);
 
     // ==================== INIT ====================
 
@@ -601,8 +1030,8 @@
         }
 
         try {
-            createFloatingUI();
-            console.log('💾 Storage Backup v2.2 Ready');
+            createUI();
+            console.log('💾 Storage Backup v3.0 Ready');
         } catch (e) {
             console.error('Storage Backup error:', e);
         }
