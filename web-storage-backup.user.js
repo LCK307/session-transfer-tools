@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Web Storage Backup & Restore
 // @namespace    https://github.com/LCK307/web-storage-backup
-// @version      3.0
-// @description  Xuất/Nhập localStorage, cookies, IndexedDB với giao diện tab
+// @version      2.4
+// @description  Xuất/Nhập localStorage, cookies, IndexedDB với nút kéo thả
 // @author       Your Name
 // @match        *://*/*
 // @grant        GM_setClipboard
@@ -16,6 +16,12 @@
 
 (function() {
     'use strict';
+
+    // ==================== DETECT MOBILE ====================
+
+    function isMobile() {
+        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    }
 
     // ==================== EXPORT FUNCTIONS ====================
 
@@ -82,12 +88,12 @@
                         try {
                             var tx = db.transaction(storeName, 'readonly');
                             var store = tx.objectStore(storeName);
-                            var data = await new Promise(function(resolve, reject) {
-                                var request = store.getAll();
-                                request.onsuccess = function() { resolve(request.result); };
-                                request.onerror = function() { reject(request.error); };
+                            var storeData = await new Promise(function(resolve, reject) {
+                                var req = store.getAll();
+                                req.onsuccess = function() { resolve(req.result); };
+                                req.onerror = function() { reject(req.error); };
                             });
-                            result[dbInfo.name].stores[storeName] = data;
+                            result[dbInfo.name].stores[storeName] = storeData;
                         } catch (e) {}
                     }
 
@@ -115,6 +121,15 @@
         };
 
         return JSON.stringify(data, null, 2);
+    }
+
+    async function exportCompressed() {
+        var data = await exportAll();
+        try {
+            return btoa(unescape(encodeURIComponent(data)));
+        } catch (e) {
+            return data;
+        }
     }
 
     // ==================== IMPORT FUNCTIONS ====================
@@ -216,10 +231,45 @@
         return count;
     }
 
+    async function importFromData(input) {
+        try {
+            var data;
+
+            try {
+                var decoded = decodeURIComponent(escape(atob(input)));
+                data = JSON.parse(decoded);
+            } catch (e) {
+                data = JSON.parse(input);
+            }
+
+            if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
+                if (!window.confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
+                    return { success: false, error: 'Người dùng hủy' };
+                }
+            }
+
+            var results = {
+                localStorage: importLocalStorage(data.localStorage),
+                sessionStorage: importSessionStorage(data.sessionStorage),
+                cookies: importCookies(data.cookies),
+                indexedDB: await importIndexedDB(data.indexedDB)
+            };
+
+            return {
+                success: true,
+                results: results,
+                total: results.localStorage + results.sessionStorage + results.cookies + results.indexedDB
+            };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+
     // ==================== FILE FUNCTIONS ====================
 
-    function downloadFile(content, filename) {
-        var blob = new Blob([content], { type: 'application/json' });
+    function downloadFile(content, filename, type) {
+        var mimeType = type || 'application/json';
+        var blob = new Blob([content], { type: mimeType });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
@@ -230,35 +280,272 @@
         URL.revokeObjectURL(url);
     }
 
-    function readFile(file) {
-        return new Promise(function(resolve, reject) {
-            var reader = new FileReader();
-            reader.onload = function(e) { resolve(e.target.result); };
-            reader.onerror = function() { reject(new Error('Không đọc được file')); };
-            reader.readAsText(file);
+    function pickAndReadFile(callback) {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,.txt';
+        input.onchange = function(e) {
+            if (e.target.files.length > 0) {
+                var reader = new FileReader();
+                reader.onload = function(event) {
+                    callback(event.target.result);
+                };
+                reader.onerror = function() {
+                    alert('Không đọc được file!');
+                };
+                reader.readAsText(e.target.files[0]);
+            }
+        };
+        input.click();
+    }
+
+    // ==================== ACTION HANDLERS ====================
+
+    async function handleExportJSON() {
+        if (isMobile()) {
+            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy" để tránh mất dữ liệu.');
+        }
+        try {
+            var data = await exportAll();
+            GM_setClipboard(data);
+
+            var parsed = JSON.parse(data);
+            var ls = Object.keys(parsed.localStorage || {}).length;
+            var ss = Object.keys(parsed.sessionStorage || {}).length;
+            var ck = Object.keys(parsed.cookies || {}).length;
+            var idb = Object.keys(parsed.indexedDB || {}).length;
+
+            alert('Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\nindexedDB: ' + idb);
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
+
+    async function handleDownloadJSON() {
+        try {
+            var data = await exportAll();
+            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename, 'application/json');
+            alert('Đã tải file: ' + filename);
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
+
+    async function handleExportCompressed() {
+        if (isMobile()) {
+            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File Nén" thay vì "Copy" để tránh mất dữ liệu.');
+        }
+        try {
+            var data = await exportCompressed();
+            GM_setClipboard(data);
+            alert('Đã copy dạng nén!\n\nKích thước: ' + (data.length / 1024).toFixed(1) + ' KB');
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
+
+    async function handleDownloadCompressed() {
+        try {
+            var data = await exportCompressed();
+            var filename = 'storage-compressed-' + window.location.hostname + '-' + Date.now() + '.txt';
+            downloadFile(data, filename, 'text/plain');
+            alert('Đã tải file nén: ' + filename);
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
+
+    function handleExportLocalStorage() {
+        if (isMobile()) {
+            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
+        }
+        var data = JSON.stringify(exportLocalStorage(), null, 2);
+        GM_setClipboard(data);
+        alert('Đã copy localStorage (' + Object.keys(JSON.parse(data)).length + ' keys)');
+    }
+
+    function handleDownloadLocalStorage() {
+        var data = JSON.stringify(exportLocalStorage(), null, 2);
+        var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(data, filename, 'application/json');
+        alert('Đã tải file: ' + filename);
+    }
+
+    function handleExportCookies() {
+        if (isMobile()) {
+            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
+        }
+        var data = JSON.stringify(exportCookies(), null, 2);
+        GM_setClipboard(data);
+        alert('Đã copy cookies (' + Object.keys(JSON.parse(data)).length + ')');
+    }
+
+    function handleDownloadCookies() {
+        var data = JSON.stringify(exportCookies(), null, 2);
+        var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(data, filename, 'application/json');
+        alert('Đã tải file: ' + filename);
+    }
+
+    async function handleImport() {
+        var input = prompt('Dán dữ liệu storage (JSON hoặc nén):');
+        if (!input) return;
+
+        var result = await importFromData(input.trim());
+
+        if (result.success) {
+            if (confirm('Nhập thành công! ' + result.total + ' items\n\nReload trang?')) {
+                location.reload();
+            }
+        } else {
+            alert('Lỗi: ' + result.error);
+        }
+    }
+
+    function handleImportFromFile() {
+        pickAndReadFile(async function(text) {
+            var result = await importFromData(text.trim());
+            if (result.success) {
+                if (confirm('Nhập thành công! ' + result.total + ' items\n\nReload trang?')) {
+                    location.reload();
+                }
+            } else {
+                alert('Lỗi: ' + result.error);
+            }
         });
     }
 
-    // ==================== UI ====================
+    function handleImportLocalStorage() {
+        var input = prompt('Dán dữ liệu localStorage (JSON):');
+        if (!input) return;
 
-    var panel = null;
-    var overlay = null;
-    var currentTab = 'export';
+        try {
+            var data = JSON.parse(input.trim());
+            var count = importLocalStorage(data);
+            if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
+                location.reload();
+            }
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
 
-    function createUI() {
-        // CSS
+    function handleImportLocalStorageFromFile() {
+        pickAndReadFile(function(text) {
+            try {
+                var data = JSON.parse(text.trim());
+                var count = importLocalStorage(data);
+                if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
+                    location.reload();
+                }
+            } catch (e) {
+                alert('Lỗi: ' + e.message);
+            }
+        });
+    }
+
+    function handleImportCookies() {
+        var input = prompt('Dán dữ liệu cookies (JSON):');
+        if (!input) return;
+
+        try {
+            var data = JSON.parse(input.trim());
+            var count = importCookies(data);
+            if (confirm('Đã nhập ' + count + ' cookies!\n\nReload trang?')) {
+                location.reload();
+            }
+        } catch (e) {
+            alert('Lỗi: ' + e.message);
+        }
+    }
+
+    function handleImportCookiesFromFile() {
+        pickAndReadFile(function(text) {
+            try {
+                var data = JSON.parse(text.trim());
+                var count = importCookies(data);
+                if (confirm('Đã nhập ' + count + ' cookies!\n\nReload trang?')) {
+                    location.reload();
+                }
+            } catch (e) {
+                alert('Lỗi: ' + e.message);
+            }
+        });
+    }
+
+    function handleView() {
+        var ls = localStorage.length;
+        var ss = sessionStorage.length;
+        var ck = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
+
+        alert('STORAGE: ' + window.location.hostname + '\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck);
+    }
+
+    function handleClear() {
+        var choice = prompt('Nhập số:\n1 - Xóa localStorage\n2 - Xóa sessionStorage\n3 - Xóa cookies\n4 - Xóa TẤT CẢ\n0 - Hủy');
+
+        if (choice === '1') {
+            localStorage.clear();
+            alert('Đã xóa localStorage');
+        } else if (choice === '2') {
+            sessionStorage.clear();
+            alert('Đã xóa sessionStorage');
+        } else if (choice === '3') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var name = cookies[i].split('=')[0].trim();
+                document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+            }
+            alert('Đã xóa cookies');
+        } else if (choice === '4') {
+            if (confirm('Xóa TẤT CẢ storage?')) {
+                localStorage.clear();
+                sessionStorage.clear();
+                var cookies = document.cookie.split(';');
+                for (var i = 0; i < cookies.length; i++) {
+                    var name = cookies[i].split('=')[0].trim();
+                    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+                }
+                alert('Đã xóa tất cả!');
+            }
+        }
+    }
+
+    // ==================== MENU COMMANDS ====================
+
+    GM_registerMenuCommand('📤 Copy JSON (⚠️ PC)', handleExportJSON);
+    GM_registerMenuCommand('💾 Tải File JSON', handleDownloadJSON);
+    GM_registerMenuCommand('🗜️ Copy Nén (⚠️ PC)', handleExportCompressed);
+    GM_registerMenuCommand('💾 Tải File Nén (.txt)', handleDownloadCompressed);
+    GM_registerMenuCommand('📦 Copy localStorage (⚠️ PC)', handleExportLocalStorage);
+    GM_registerMenuCommand('💾 Tải localStorage', handleDownloadLocalStorage);
+    GM_registerMenuCommand('🍪 Copy Cookies (⚠️ PC)', handleExportCookies);
+    GM_registerMenuCommand('💾 Tải Cookies', handleDownloadCookies);
+    GM_registerMenuCommand('📥 Nhập Storage (Paste)', handleImport);
+    GM_registerMenuCommand('📂 Nhập Storage (File)', handleImportFromFile);
+    GM_registerMenuCommand('📦 Nhập localStorage (Paste)', handleImportLocalStorage);
+    GM_registerMenuCommand('📂 Nhập localStorage (File)', handleImportLocalStorageFromFile);
+    GM_registerMenuCommand('🍪 Nhập Cookies (Paste)', handleImportCookies);
+    GM_registerMenuCommand('📂 Nhập Cookies (File)', handleImportCookiesFromFile);
+    GM_registerMenuCommand('👁️ Xem Storage', handleView);
+    GM_registerMenuCommand('🗑️ Xóa Storage', handleClear);
+
+    // ==================== FLOATING UI ====================
+
+    function createFloatingUI() {
         GM_addStyle('\
             #sb-float-btn {\
                 position: fixed;\
-                width: 46px;\
-                height: 46px;\
+                width: 44px;\
+                height: 44px;\
                 background: linear-gradient(135deg, #667eea, #764ba2);\
                 border: none;\
                 border-radius: 50%;\
                 color: white;\
-                font-size: 20px;\
+                font-size: 18px;\
                 z-index: 2147483647;\
-                box-shadow: 0 3px 15px rgba(0,0,0,0.3);\
+                box-shadow: 0 2px 12px rgba(0,0,0,0.3);\
                 display: flex;\
                 align-items: center;\
                 justify-content: center;\
@@ -271,664 +558,129 @@
                 opacity: 0.8;\
                 transform: scale(1.1);\
             }\
-            #sb-overlay {\
+            #sb-menu {\
                 position: fixed;\
-                top: 0;\
-                left: 0;\
-                right: 0;\
-                bottom: 0;\
-                background: rgba(0,0,0,0.6);\
-                z-index: 2147483640;\
+                background: #1e1e2e;\
+                border-radius: 12px;\
+                padding: 6px;\
+                z-index: 2147483646;\
+                box-shadow: 0 5px 25px rgba(0,0,0,0.5);\
                 display: none;\
-            }\
-            #sb-overlay.show {\
-                display: block;\
-            }\
-            #sb-panel {\
-                position: fixed;\
-                top: 50%;\
-                left: 50%;\
-                transform: translate(-50%, -50%);\
-                width: 340px;\
-                max-width: 95vw;\
-                max-height: 85vh;\
-                background: #1a1a2e;\
-                border-radius: 16px;\
-                z-index: 2147483645;\
-                box-shadow: 0 10px 40px rgba(0,0,0,0.5);\
-                display: none;\
-                flex-direction: column;\
-                overflow: hidden;\
-                font-family: -apple-system, BlinkMacSystemFont, sans-serif;\
-            }\
-            #sb-panel.show {\
-                display: flex;\
-            }\
-            #sb-header {\
-                display: flex;\
-                justify-content: space-between;\
-                align-items: center;\
-                padding: 14px 16px;\
-                background: linear-gradient(135deg, #667eea, #764ba2);\
-                color: white;\
-            }\
-            #sb-header-title {\
-                font-size: 16px;\
-                font-weight: 600;\
-                margin: 0;\
-            }\
-            #sb-close {\
-                background: rgba(255,255,255,0.2);\
-                border: none;\
-                color: white;\
-                width: 30px;\
-                height: 30px;\
-                border-radius: 50%;\
-                font-size: 18px;\
-                cursor: pointer;\
-                display: flex;\
-                align-items: center;\
-                justify-content: center;\
-            }\
-            #sb-tabs {\
-                display: flex;\
-                background: #16213e;\
-            }\
-            .sb-tab {\
-                flex: 1;\
-                padding: 12px;\
-                background: none;\
-                border: none;\
-                border-bottom: 3px solid transparent;\
-                color: #888;\
-                font-size: 13px;\
-                cursor: pointer;\
-                transition: all 0.2s;\
-            }\
-            .sb-tab.active {\
-                color: #667eea;\
-                border-bottom-color: #667eea;\
-                background: rgba(102, 126, 234, 0.1);\
-            }\
-            #sb-content {\
-                flex: 1;\
+                min-width: 220px;\
+                max-height: 80vh;\
                 overflow-y: auto;\
-                padding: 16px;\
-                color: white;\
             }\
-            .sb-section {\
-                margin-bottom: 16px;\
-            }\
-            .sb-section-title {\
-                font-size: 13px;\
-                color: #888;\
-                margin-bottom: 10px;\
-                display: flex;\
-                align-items: center;\
-                gap: 6px;\
-            }\
-            .sb-btn {\
-                width: 100%;\
-                padding: 12px 16px;\
-                margin: 6px 0;\
-                background: #2d3a5a;\
-                border: none;\
-                border-radius: 10px;\
-                color: white;\
-                font-size: 14px;\
-                cursor: pointer;\
-                display: flex;\
-                align-items: center;\
-                gap: 10px;\
-                transition: background 0.2s;\
-            }\
-            .sb-btn:active {\
-                background: #3d4a7a;\
-            }\
-            .sb-btn-primary {\
-                background: linear-gradient(135deg, #667eea, #764ba2);\
-            }\
-            .sb-btn-danger {\
-                background: #5a2d3a;\
-            }\
-            .sb-file-input {\
-                display: none;\
-            }\
-            .sb-info {\
-                background: #16213e;\
-                padding: 12px;\
-                border-radius: 10px;\
-                margin-bottom: 12px;\
-                font-size: 12px;\
-                color: #aaa;\
-            }\
-            .sb-stats {\
-                display: grid;\
-                grid-template-columns: repeat(3, 1fr);\
-                gap: 8px;\
-                margin-bottom: 16px;\
-            }\
-            .sb-stat {\
-                background: #16213e;\
-                padding: 10px;\
-                border-radius: 10px;\
-                text-align: center;\
-            }\
-            .sb-stat-value {\
-                font-size: 18px;\
-                font-weight: bold;\
-                color: #667eea;\
-            }\
-            .sb-stat-label {\
-                font-size: 10px;\
-                color: #888;\
-                margin-top: 2px;\
-            }\
-            .sb-divider {\
-                height: 1px;\
-                background: #2d3a5a;\
-                margin: 16px 0;\
-            }\
-            .sb-toast {\
-                position: fixed;\
-                bottom: 100px;\
-                left: 50%;\
-                transform: translateX(-50%);\
-                background: #333;\
-                color: white;\
-                padding: 12px 24px;\
-                border-radius: 10px;\
-                z-index: 2147483650;\
-                font-size: 14px;\
-                display: none;\
-            }\
-            .sb-toast.show {\
+            #sb-menu.show {\
                 display: block;\
             }\
-            .sb-toast.success {\
-                background: #2d5a3a;\
+            #sb-menu button {\
+                display: block;\
+                width: 100%;\
+                padding: 12px 14px;\
+                margin: 3px 0;\
+                background: #2d2d3d;\
+                border: none;\
+                border-radius: 8px;\
+                color: white;\
+                font-size: 13px;\
+                text-align: left;\
+                cursor: pointer;\
             }\
-            .sb-toast.error {\
-                background: #5a2d3a;\
+            #sb-menu button:active {\
+                background: #4d4d6d;\
+            }\
+            #sb-menu button.warn {\
+                color: #ffaa00;\
+            }\
+            .sb-menu-divider {\
+                height: 1px;\
+                background: #3d3d5d;\
+                margin: 6px 0;\
+            }\
+            .sb-menu-title {\
+                color: #888;\
+                font-size: 11px;\
+                padding: 8px 10px 4px;\
+                text-transform: uppercase;\
+            }\
+            .sb-menu-warning {\
+                background: #3d2d1d;\
+                color: #ffaa00;\
+                font-size: 11px;\
+                padding: 8px 10px;\
+                border-radius: 6px;\
+                margin: 6px 0;\
             }\
         ');
 
-        // Floating Button
         var btn = document.createElement('button');
         btn.id = 'sb-float-btn';
         btn.textContent = '💾';
         document.body.appendChild(btn);
 
-        // Overlay
-        overlay = document.createElement('div');
-        overlay.id = 'sb-overlay';
-        document.body.appendChild(overlay);
+        var menu = document.createElement('div');
+        menu.id = 'sb-menu';
 
-        // Panel
-        panel = document.createElement('div');
-        panel.id = 'sb-panel';
+        var menuData = [
+            { warning: isMobile() ? '📱 Đang dùng điện thoại - Nên tải file!' : null },
+            { title: '── XUẤT (TẢI FILE) ──' },
+            { text: '💾 Tải JSON (Tất cả)', action: handleDownloadJSON },
+            { text: '💾 Tải File Nén (.txt)', action: handleDownloadCompressed },
+            { text: '💾 Tải localStorage', action: handleDownloadLocalStorage },
+            { text: '💾 Tải Cookies', action: handleDownloadCookies },
+            { title: '── XUẤT (COPY - ⚠️ PC) ──' },
+            { text: '📤 Copy JSON', action: handleExportJSON, warn: true },
+            { text: '🗜️ Copy Nén', action: handleExportCompressed, warn: true },
+            { text: '📦 Copy localStorage', action: handleExportLocalStorage, warn: true },
+            { text: '🍪 Copy Cookies', action: handleExportCookies, warn: true },
+            { title: '── NHẬP (CHỌN FILE) ──' },
+            { text: '📂 Nhập Storage (File)', action: handleImportFromFile },
+            { text: '📂 Nhập localStorage (File)', action: handleImportLocalStorageFromFile },
+            { text: '📂 Nhập Cookies (File)', action: handleImportCookiesFromFile },
+            { title: '── NHẬP (PASTE) ──' },
+            { text: '📥 Nhập Storage (Paste)', action: handleImport },
+            { text: '📦 Nhập localStorage (Paste)', action: handleImportLocalStorage },
+            { text: '🍪 Nhập Cookies (Paste)', action: handleImportCookies },
+            { title: '── KHÁC ──' },
+            { text: '👁️ Xem Storage', action: handleView },
+            { text: '🗑️ Xóa Storage', action: handleClear }
+        ];
 
-        // Header
-        var header = document.createElement('div');
-        header.id = 'sb-header';
-
-        var title = document.createElement('h3');
-        title.id = 'sb-header-title';
-        title.textContent = '💾 Storage Backup';
-
-        var closeBtn = document.createElement('button');
-        closeBtn.id = 'sb-close';
-        closeBtn.textContent = '×';
-        closeBtn.onclick = hidePanel;
-
-        header.appendChild(title);
-        header.appendChild(closeBtn);
-        panel.appendChild(header);
-
-        // Tabs
-        var tabs = document.createElement('div');
-        tabs.id = 'sb-tabs';
-
-        var tabExport = document.createElement('button');
-        tabExport.className = 'sb-tab active';
-        tabExport.textContent = '📤 Xuất';
-        tabExport.onclick = function() { switchTab('export'); };
-
-        var tabImportSingle = document.createElement('button');
-        tabImportSingle.className = 'sb-tab';
-        tabImportSingle.textContent = '📥 Nhập Riêng';
-        tabImportSingle.onclick = function() { switchTab('import-single'); };
-
-        var tabImportAll = document.createElement('button');
-        tabImportAll.className = 'sb-tab';
-        tabImportAll.textContent = '📦 Nhập Tất Cả';
-        tabImportAll.onclick = function() { switchTab('import-all'); };
-
-        tabs.appendChild(tabExport);
-        tabs.appendChild(tabImportSingle);
-        tabs.appendChild(tabImportAll);
-        panel.appendChild(tabs);
-
-        // Content
-        var content = document.createElement('div');
-        content.id = 'sb-content';
-        panel.appendChild(content);
-
-        document.body.appendChild(panel);
-
-        // Toast
-        var toast = document.createElement('div');
-        toast.className = 'sb-toast';
-        toast.id = 'sb-toast';
-        document.body.appendChild(toast);
-
-        // Events
-        overlay.onclick = hidePanel;
-        setupDrag(btn);
-
-        // Initial render
-        renderTab('export');
-    }
-
-    function switchTab(tab) {
-        currentTab = tab;
-        var tabs = document.querySelectorAll('.sb-tab');
-        for (var i = 0; i < tabs.length; i++) {
-            tabs[i].classList.remove('active');
-        }
-        if (tab === 'export') {
-            tabs[0].classList.add('active');
-        } else if (tab === 'import-single') {
-            tabs[1].classList.add('active');
-        } else {
-            tabs[2].classList.add('active');
-        }
-        renderTab(tab);
-    }
-
-    function renderTab(tab) {
-        var content = document.getElementById('sb-content');
-        content.textContent = '';
-
-        if (tab === 'export') {
-            renderExportTab(content);
-        } else if (tab === 'import-single') {
-            renderImportSingleTab(content);
-        } else {
-            renderImportAllTab(content);
-        }
-    }
-
-    function renderExportTab(content) {
-        // Stats
-        var stats = document.createElement('div');
-        stats.className = 'sb-stats';
-
-        var lsCount = localStorage.length;
-        var ssCount = sessionStorage.length;
-        var ckCount = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
-
-        var statLS = createStat(lsCount, 'localStorage');
-        var statSS = createStat(ssCount, 'session');
-        var statCK = createStat(ckCount, 'cookies');
-
-        stats.appendChild(statLS);
-        stats.appendChild(statSS);
-        stats.appendChild(statCK);
-        content.appendChild(stats);
-
-        // Info
-        var info = document.createElement('div');
-        info.className = 'sb-info';
-        info.textContent = '📱 Trên điện thoại, nên tải file để tránh mất dữ liệu khi copy.';
-        content.appendChild(info);
-
-        // Section: Xuất Tất Cả
-        var section1 = createSection('📦 Xuất Tất Cả Storage');
-
-        var btnDownloadAll = createButton('💾 Tải File JSON (Tất Cả)', 'sb-btn-primary', async function() {
-            var data = await exportAll();
-            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename);
-            showToast('Đã tải file!', 'success');
-        });
-        section1.appendChild(btnDownloadAll);
-
-        var btnCopyAll = createButton('📋 Copy JSON (Tất Cả)', '', async function() {
-            var data = await exportAll();
-            GM_setClipboard(data);
-            showToast('Đã copy!', 'success');
-        });
-        section1.appendChild(btnCopyAll);
-
-        content.appendChild(section1);
-
-        // Divider
-        content.appendChild(createDivider());
-
-        // Section: Xuất Riêng
-        var section2 = createSection('📂 Xuất Riêng Từng Loại');
-
-        var btnDownloadLS = createButton('📦 Tải localStorage', '', function() {
-            var data = JSON.stringify(exportLocalStorage(), null, 2);
-            var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename);
-            showToast('Đã tải file!', 'success');
-        });
-        section2.appendChild(btnDownloadLS);
-
-        var btnDownloadCK = createButton('🍪 Tải Cookies', '', function() {
-            var data = JSON.stringify(exportCookies(), null, 2);
-            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename);
-            showToast('Đã tải file!', 'success');
-        });
-        section2.appendChild(btnDownloadCK);
-
-        var btnDownloadSS = createButton('📋 Tải sessionStorage', '', function() {
-            var data = JSON.stringify(exportSessionStorage(), null, 2);
-            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename);
-            showToast('Đã tải file!', 'success');
-        });
-        section2.appendChild(btnDownloadSS);
-
-        content.appendChild(section2);
-
-        // Divider
-        content.appendChild(createDivider());
-
-        // Section: Xóa
-        var section3 = createSection('🗑️ Xóa Dữ Liệu');
-
-        var btnClear = createButton('🗑️ Xóa Tất Cả Storage', 'sb-btn-danger', function() {
-            if (confirm('Xóa TẤT CẢ storage của trang này?')) {
-                localStorage.clear();
-                sessionStorage.clear();
-                var cookies = document.cookie.split(';');
-                for (var i = 0; i < cookies.length; i++) {
-                    var name = cookies[i].split('=')[0].trim();
-                    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+        for (var i = 0; i < menuData.length; i++) {
+            var item = menuData[i];
+            if (item.warning) {
+                var warningDiv = document.createElement('div');
+                warningDiv.className = 'sb-menu-warning';
+                warningDiv.textContent = item.warning;
+                menu.appendChild(warningDiv);
+            } else if (item.title) {
+                var titleDiv = document.createElement('div');
+                titleDiv.className = 'sb-menu-title';
+                titleDiv.textContent = item.title;
+                menu.appendChild(titleDiv);
+            } else if (item.divider) {
+                var divider = document.createElement('div');
+                divider.className = 'sb-menu-divider';
+                menu.appendChild(divider);
+            } else {
+                var menuBtn = document.createElement('button');
+                menuBtn.textContent = item.text;
+                if (item.warn) {
+                    menuBtn.className = 'warn';
                 }
-                showToast('Đã xóa tất cả!', 'success');
-                renderTab('export');
-            }
-        });
-        section3.appendChild(btnClear);
-
-        content.appendChild(section3);
-    }
-
-    function renderImportSingleTab(content) {
-        // Info
-        var info = document.createElement('div');
-        info.className = 'sb-info';
-        info.textContent = '📂 Chọn file JSON đã xuất từ tab "Xuất Riêng Từng Loại" để nhập.';
-        content.appendChild(info);
-
-        // Section: localStorage
-        var section1 = createSection('📦 Nhập localStorage');
-
-        var fileInputLS = document.createElement('input');
-        fileInputLS.type = 'file';
-        fileInputLS.accept = '.json,.txt';
-        fileInputLS.className = 'sb-file-input';
-        fileInputLS.id = 'sb-file-ls';
-        fileInputLS.onchange = async function(e) {
-            if (e.target.files.length > 0) {
-                try {
-                    var text = await readFile(e.target.files[0]);
-                    var data = JSON.parse(text);
-                    var count = importLocalStorage(data);
-                    showToast('Đã nhập ' + count + ' keys!', 'success');
-                    if (confirm('Reload trang để áp dụng?')) {
-                        location.reload();
-                    }
-                } catch (err) {
-                    showToast('Lỗi: ' + err.message, 'error');
-                }
-            }
-        };
-        content.appendChild(fileInputLS);
-
-        var btnImportLS = createButton('📂 Chọn File localStorage', 'sb-btn-primary', function() {
-            fileInputLS.click();
-        });
-        section1.appendChild(btnImportLS);
-
-        content.appendChild(section1);
-
-        // Divider
-        content.appendChild(createDivider());
-
-        // Section: Cookies
-        var section2 = createSection('🍪 Nhập Cookies');
-
-        var fileInputCK = document.createElement('input');
-        fileInputCK.type = 'file';
-        fileInputCK.accept = '.json,.txt';
-        fileInputCK.className = 'sb-file-input';
-        fileInputCK.id = 'sb-file-ck';
-        fileInputCK.onchange = async function(e) {
-            if (e.target.files.length > 0) {
-                try {
-                    var text = await readFile(e.target.files[0]);
-                    var data = JSON.parse(text);
-                    var count = importCookies(data);
-                    showToast('Đã nhập ' + count + ' cookies!', 'success');
-                    if (confirm('Reload trang để áp dụng?')) {
-                        location.reload();
-                    }
-                } catch (err) {
-                    showToast('Lỗi: ' + err.message, 'error');
-                }
-            }
-        };
-        content.appendChild(fileInputCK);
-
-        var btnImportCK = createButton('📂 Chọn File Cookies', 'sb-btn-primary', function() {
-            fileInputCK.click();
-        });
-        section2.appendChild(btnImportCK);
-
-        content.appendChild(section2);
-
-        // Divider
-        content.appendChild(createDivider());
-
-        // Section: sessionStorage
-        var section3 = createSection('📋 Nhập sessionStorage');
-
-        var fileInputSS = document.createElement('input');
-        fileInputSS.type = 'file';
-        fileInputSS.accept = '.json,.txt';
-        fileInputSS.className = 'sb-file-input';
-        fileInputSS.id = 'sb-file-ss';
-        fileInputSS.onchange = async function(e) {
-            if (e.target.files.length > 0) {
-                try {
-                    var text = await readFile(e.target.files[0]);
-                    var data = JSON.parse(text);
-                    var count = importSessionStorage(data);
-                    showToast('Đã nhập ' + count + ' keys!', 'success');
-                    if (confirm('Reload trang để áp dụng?')) {
-                        location.reload();
-                    }
-                } catch (err) {
-                    showToast('Lỗi: ' + err.message, 'error');
-                }
-            }
-        };
-        content.appendChild(fileInputSS);
-
-        var btnImportSS = createButton('📂 Chọn File sessionStorage', 'sb-btn-primary', function() {
-            fileInputSS.click();
-        });
-        section3.appendChild(btnImportSS);
-
-        content.appendChild(section3);
-    }
-
-    function renderImportAllTab(content) {
-        // Info
-        var info = document.createElement('div');
-        info.className = 'sb-info';
-        info.textContent = '📦 Chọn file JSON đã xuất từ "Tải File JSON (Tất Cả)" để nhập toàn bộ storage.';
-        content.appendChild(info);
-
-        // Section: Nhập từ File
-        var section1 = createSection('📂 Nhập Từ File');
-
-        var fileInputAll = document.createElement('input');
-        fileInputAll.type = 'file';
-        fileInputAll.accept = '.json,.txt';
-        fileInputAll.className = 'sb-file-input';
-        fileInputAll.id = 'sb-file-all';
-        fileInputAll.onchange = async function(e) {
-            if (e.target.files.length > 0) {
-                try {
-                    var text = await readFile(e.target.files[0]);
-                    var data = JSON.parse(text);
-
-                    if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
-                        if (!confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
-                            return;
-                        }
-                    }
-
-                    var results = {
-                        localStorage: importLocalStorage(data.localStorage),
-                        sessionStorage: importSessionStorage(data.sessionStorage),
-                        cookies: importCookies(data.cookies),
-                        indexedDB: await importIndexedDB(data.indexedDB)
+                (function(action) {
+                    menuBtn.onclick = function() {
+                        menu.classList.remove('show');
+                        action();
                     };
-
-                    var total = results.localStorage + results.sessionStorage + results.cookies + results.indexedDB;
-                    showToast('Đã nhập ' + total + ' items!', 'success');
-
-                    if (confirm('Reload trang để áp dụng?')) {
-                        location.reload();
-                    }
-                } catch (err) {
-                    showToast('Lỗi: ' + err.message, 'error');
-                }
+                })(item.action);
+                menu.appendChild(menuBtn);
             }
-        };
-        content.appendChild(fileInputAll);
+        }
 
-        var btnImportFile = createButton('📂 Chọn File Storage', 'sb-btn-primary', function() {
-            fileInputAll.click();
-        });
-        section1.appendChild(btnImportFile);
+        document.body.appendChild(menu);
 
-        content.appendChild(section1);
-
-        // Divider
-        content.appendChild(createDivider());
-
-        // Section: Nhập từ Text (backup)
-        var section2 = createSection('📝 Nhập Từ Text (Nếu File Không Hoạt Động)');
-
-        var btnImportText = createButton('📝 Dán Text JSON', '', function() {
-            var input = prompt('Dán dữ liệu JSON:');
-            if (!input) return;
-
-            try {
-                var data = JSON.parse(input.trim());
-
-                if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
-                    if (!confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
-                        return;
-                    }
-                }
-
-                var lsCount = importLocalStorage(data.localStorage);
-                var ssCount = importSessionStorage(data.sessionStorage);
-                var ckCount = importCookies(data.cookies);
-
-                var total = lsCount + ssCount + ckCount;
-                showToast('Đã nhập ' + total + ' items!', 'success');
-
-                if (confirm('Reload trang để áp dụng?')) {
-                    location.reload();
-                }
-            } catch (err) {
-                showToast('Lỗi: ' + err.message, 'error');
-            }
-        });
-        section2.appendChild(btnImportText);
-
-        content.appendChild(section2);
-    }
-
-    // ==================== UI HELPERS ====================
-
-    function createSection(titleText) {
-        var section = document.createElement('div');
-        section.className = 'sb-section';
-
-        var title = document.createElement('div');
-        title.className = 'sb-section-title';
-        title.textContent = titleText;
-        section.appendChild(title);
-
-        return section;
-    }
-
-    function createButton(text, extraClass, onclick) {
-        var btn = document.createElement('button');
-        btn.className = 'sb-btn' + (extraClass ? ' ' + extraClass : '');
-        btn.textContent = text;
-        btn.onclick = onclick;
-        return btn;
-    }
-
-    function createStat(value, label) {
-        var stat = document.createElement('div');
-        stat.className = 'sb-stat';
-
-        var val = document.createElement('div');
-        val.className = 'sb-stat-value';
-        val.textContent = value;
-
-        var lbl = document.createElement('div');
-        lbl.className = 'sb-stat-label';
-        lbl.textContent = label;
-
-        stat.appendChild(val);
-        stat.appendChild(lbl);
-        return stat;
-    }
-
-    function createDivider() {
-        var div = document.createElement('div');
-        div.className = 'sb-divider';
-        return div;
-    }
-
-    function showToast(message, type) {
-        var toast = document.getElementById('sb-toast');
-        toast.textContent = message;
-        toast.className = 'sb-toast show ' + (type || '');
-        setTimeout(function() {
-            toast.classList.remove('show');
-        }, 2500);
-    }
-
-    function showPanel() {
-        panel.classList.add('show');
-        overlay.classList.add('show');
-        renderTab(currentTab);
-    }
-
-    function hidePanel() {
-        panel.classList.remove('show');
-        overlay.classList.remove('show');
-    }
-
-    // ==================== DRAG ====================
-
-    function setupDrag(btn) {
+        // Drag
         var startX = 0;
         var startY = 0;
         var startLeft = 0;
@@ -983,8 +735,8 @@
             var newLeft = startLeft + dx;
             var newTop = startTop + dy;
 
-            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 46));
-            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 46));
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 44));
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 44));
 
             btn.style.left = newLeft + 'px';
             btn.style.top = newTop + 'px';
@@ -1004,8 +756,36 @@
             GM_setValue('sb_btn_pos', { left: rect.left, top: rect.top });
 
             if (!hasDragged) {
-                showPanel();
+                toggleMenu();
             }
+        }
+
+        function toggleMenu() {
+            if (menu.classList.contains('show')) {
+                menu.classList.remove('show');
+                return;
+            }
+
+            var rect = btn.getBoundingClientRect();
+            var left = rect.left;
+            var top = rect.bottom + 10;
+
+            if (left + 220 > window.innerWidth) {
+                left = window.innerWidth - 230;
+            }
+            if (left < 10) {
+                left = 10;
+            }
+            if (top + 500 > window.innerHeight) {
+                top = rect.top - 510;
+            }
+            if (top < 10) {
+                top = 10;
+            }
+
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+            menu.classList.add('show');
         }
 
         btn.addEventListener('touchstart', dragStart, { passive: false });
@@ -1015,11 +795,13 @@
         btn.addEventListener('mousedown', dragStart);
         document.addEventListener('mousemove', dragMove);
         document.addEventListener('mouseup', dragEnd);
+
+        document.addEventListener('click', function(e) {
+            if (e.target !== btn && !menu.contains(e.target)) {
+                menu.classList.remove('show');
+            }
+        });
     }
-
-    // ==================== MENU COMMANDS ====================
-
-    GM_registerMenuCommand('💾 Mở Storage Backup', showPanel);
 
     // ==================== INIT ====================
 
@@ -1030,8 +812,8 @@
         }
 
         try {
-            createUI();
-            console.log('💾 Storage Backup v3.0 Ready');
+            createFloatingUI();
+            console.log('💾 Storage Backup v2.4 Ready');
         } catch (e) {
             console.error('Storage Backup error:', e);
         }
