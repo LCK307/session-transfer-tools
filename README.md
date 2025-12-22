@@ -35,10 +35,15 @@ Userscript để xuất/nhập localStorage, cookies, IndexedDB giữa các thi�
 Mở trang web cần backup (vd: youtube.com)
 Click nút 💾 góc màn hình
 Chọn:
+
 • 💾 Tải JSON (Tất cả) - Khuyến nghị
+
 • 💾 Tải File Nén (.txt) - Gọn hơn
+
 • 💾 Tải localStorage - Chỉ localStorage
+
 • 💾 Tải Cookies - Chỉ cookies
+
 File sẽ được tải về
 
 ### Nhập Dữ Liệu
