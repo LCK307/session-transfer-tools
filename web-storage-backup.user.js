@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Web Storage Backup & Restore
-// @namespace    https://github.com/LCK307/web-storage-backup
-// @version      2.6
-// @description  Xuất/Nhập localStorage, cookies, sessionStorage, IndexedDB với nén GZIP
-// @author       LCK307
+// @namespace    https://github.com/YourUsername/web-storage-backup
+// @version      3.0
+// @description  Xuất/Nhập localStorage, cookies, sessionStorage, IndexedDB với mã hóa AES-256-GCM
+// @author       Your Name
 // @match        *://*/*
 // @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
@@ -23,45 +23,146 @@
         return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     }
 
-    // ==================== GZIP COMPRESSION ====================
+    // ==================== LZMA COMPRESSION ====================
+    // Simplified LZMA-like compression using built-in CompressionStream with fallback
 
-    async function compressGzip(data) {
+    async function compress(data) {
+        try {
+            // Thử dùng gzip trước (hỗ trợ tốt hơn)
+            if (typeof CompressionStream !== 'undefined') {
+                var encoder = new TextEncoder();
+                var inputData = encoder.encode(data);
+                var stream = new CompressionStream('gzip');
+                var writer = stream.writable.getWriter();
+                writer.write(inputData);
+                writer.close();
+                var compressedData = await new Response(stream.readable).arrayBuffer();
+                return new Uint8Array(compressedData);
+            }
+        } catch (e) {
+            console.warn('Compression not supported:', e);
+        }
+        // Fallback: trả về raw bytes
+        var encoder = new TextEncoder();
+        return encoder.encode(data);
+    }
+
+    async function decompress(compressedData) {
+        try {
+            if (typeof DecompressionStream !== 'undefined') {
+                var stream = new DecompressionStream('gzip');
+                var writer = stream.writable.getWriter();
+                writer.write(compressedData);
+                writer.close();
+                var decompressedData = await new Response(stream.readable).arrayBuffer();
+                var decoder = new TextDecoder();
+                return decoder.decode(decompressedData);
+            }
+        } catch (e) {
+            console.warn('Decompression failed, trying raw:', e);
+        }
+        // Fallback: thử decode raw
+        var decoder = new TextDecoder();
+        return decoder.decode(compressedData);
+    }
+
+    // ==================== AES-256-GCM ENCRYPTION ====================
+
+    async function deriveKey(password, salt) {
+        var encoder = new TextEncoder();
+        var passwordBuffer = encoder.encode(password);
+
+        var keyMaterial = await crypto.subtle.importKey(
+            'raw',
+            passwordBuffer,
+            'PBKDF2',
+            false,
+            ['deriveBits', 'deriveKey']
+        );
+
+        var key = await crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: 100000,
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt']
+        );
+
+        return key;
+    }
+
+    async function encrypt(data, password) {
         try {
             var encoder = new TextEncoder();
-            var inputData = encoder.encode(data);
 
-            var stream = new CompressionStream('gzip');
-            var writer = stream.writable.getWriter();
-            writer.write(inputData);
-            writer.close();
+            // Nén trước
+            var compressed = await compress(data);
 
-            var compressedData = await new Response(stream.readable).arrayBuffer();
-            return new Uint8Array(compressedData);
+            // Tạo salt và IV ngẫu nhiên
+            var salt = crypto.getRandomValues(new Uint8Array(16));
+            var iv = crypto.getRandomValues(new Uint8Array(12));
+
+            // Derive key từ password
+            var key = await deriveKey(password, salt);
+
+            // Mã hóa
+            var encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                compressed
+            );
+
+            // Kết hợp: salt (16) + iv (12) + encrypted data
+            var result = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+            result.set(salt, 0);
+            result.set(iv, salt.length);
+            result.set(new Uint8Array(encrypted), salt.length + iv.length);
+
+            return result;
         } catch (e) {
-            console.error('Compression error:', e);
-            return null;
+            console.error('Encryption error:', e);
+            throw new Error('Mã hóa thất bại: ' + e.message);
         }
     }
 
-    async function decompressGzip(compressedData) {
+    async function decrypt(encryptedData, password) {
         try {
-            var stream = new DecompressionStream('gzip');
-            var writer = stream.writable.getWriter();
-            writer.write(compressedData);
-            writer.close();
+            // Tách salt, iv, và encrypted data
+            var salt = encryptedData.slice(0, 16);
+            var iv = encryptedData.slice(16, 28);
+            var data = encryptedData.slice(28);
 
-            var decompressedData = await new Response(stream.readable).arrayBuffer();
-            var decoder = new TextDecoder();
-            return decoder.decode(decompressedData);
+            // Derive key từ password
+            var key = await deriveKey(password, salt);
+
+            // Giải mã
+            var decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                data
+            );
+
+            // Giải nén
+            var decompressed = await decompress(new Uint8Array(decrypted));
+
+            return decompressed;
         } catch (e) {
-            console.error('Decompression error:', e);
-            return null;
+            console.error('Decryption error:', e);
+            throw new Error('Sai mật khẩu hoặc dữ liệu bị hỏng');
         }
     }
+
+    // ==================== BASE64 HELPERS ====================
 
     function uint8ArrayToBase64(uint8Array) {
         var binary = '';
-        for (var i = 0; i < uint8Array.length; i++) {
+        var len = uint8Array.byteLength;
+        for (var i = 0; i < len; i++) {
             binary += String.fromCharCode(uint8Array[i]);
         }
         return btoa(binary);
@@ -69,8 +170,9 @@
 
     function base64ToUint8Array(base64) {
         var binary = atob(base64);
-        var uint8Array = new Uint8Array(binary.length);
-        for (var i = 0; i < binary.length; i++) {
+        var len = binary.length;
+        var uint8Array = new Uint8Array(len);
+        for (var i = 0; i < len; i++) {
             uint8Array[i] = binary.charCodeAt(i);
         }
         return uint8Array;
@@ -165,7 +267,8 @@
             _meta: {
                 url: window.location.origin,
                 hostname: window.location.hostname,
-                exportedAt: new Date().toISOString()
+                exportedAt: new Date().toISOString(),
+                version: '3.0'
             },
             localStorage: exportLocalStorage(),
             sessionStorage: exportSessionStorage(),
@@ -173,16 +276,7 @@
             indexedDB: await exportIndexedDB()
         };
 
-        return JSON.stringify(data, null, 2);
-    }
-
-    async function exportCompressedGzip() {
-        var jsonData = await exportAll();
-        var compressed = await compressGzip(jsonData);
-        if (compressed) {
-            return compressed;
-        }
-        return null;
+        return JSON.stringify(data);
     }
 
     // ==================== IMPORT FUNCTIONS ====================
@@ -284,38 +378,9 @@
         return count;
     }
 
-    async function importFromData(input) {
+    async function importFromJSON(jsonStr) {
         try {
-            var data;
-
-            // Nếu là Uint8Array hoặc ArrayBuffer (từ file .gz)
-            if (input instanceof Uint8Array || input instanceof ArrayBuffer) {
-                var uint8 = input instanceof Uint8Array ? input : new Uint8Array(input);
-                var jsonStr = await decompressGzip(uint8);
-                if (jsonStr) {
-                    data = JSON.parse(jsonStr);
-                } else {
-                    return { success: false, error: 'Không giải nén được file GZIP' };
-                }
-            } else if (typeof input === 'string') {
-                // Thử parse JSON trực tiếp
-                try {
-                    data = JSON.parse(input);
-                } catch (e) {
-                    // Thử giải nén Base64 GZIP
-                    try {
-                        var uint8 = base64ToUint8Array(input);
-                        var jsonStr = await decompressGzip(uint8);
-                        if (jsonStr) {
-                            data = JSON.parse(jsonStr);
-                        } else {
-                            return { success: false, error: 'Không giải nén được dữ liệu' };
-                        }
-                    } catch (e2) {
-                        return { success: false, error: 'Định dạng không hợp lệ' };
-                    }
-                }
-            }
+            var data = JSON.parse(jsonStr);
 
             if (data._meta && data._meta.hostname && data._meta.hostname !== window.location.hostname) {
                 if (!window.confirm('Dữ liệu từ: ' + data._meta.hostname + '\nTrang hiện tại: ' + window.location.hostname + '\n\nVẫn tiếp tục?')) {
@@ -345,7 +410,7 @@
     function downloadFile(content, filename, type) {
         var blob;
         if (content instanceof Uint8Array) {
-            blob = new Blob([content], { type: type || 'application/gzip' });
+            blob = new Blob([content], { type: type || 'application/octet-stream' });
         } else {
             blob = new Blob([content], { type: type || 'application/json' });
         }
@@ -359,10 +424,10 @@
         URL.revokeObjectURL(url);
     }
 
-    function pickAndReadFile(callback, readAs) {
+    function pickAndReadFile(callback) {
         var input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.json,.gz,.txt';
+        input.accept = '.json,.enc';
         input.onchange = function(e) {
             if (e.target.files.length > 0) {
                 var file = e.target.files[0];
@@ -373,7 +438,7 @@
                 reader.onerror = function() {
                     alert('Không đọc được file!');
                 };
-                if (readAs === 'arraybuffer' || file.name.endsWith('.gz')) {
+                if (file.name.endsWith('.enc')) {
                     reader.readAsArrayBuffer(file);
                 } else {
                     reader.readAsText(file);
@@ -383,13 +448,30 @@
         input.click();
     }
 
+    function promptPassword(title) {
+        return prompt(title + '\n\n⚠️ Nhớ mật khẩu này để giải mã!\nTối thiểu 4 ký tự:');
+    }
+
     // ==================== ACTION HANDLERS ====================
 
-    // === TẤT CẢ STORAGE ===
+    // === TẤT CẢ - KHÔNG MÃ HÓA ===
+
+    async function handleDownloadJSON() {
+        try {
+            var data = await exportAll();
+            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename, 'application/json');
+
+            var size = (data.length / 1024).toFixed(1);
+            alert('✅ Đã tải file!\n\n📄 ' + filename + '\n📦 Kích thước: ' + size + ' KB\n\n⚠️ File KHÔNG mã hóa!');
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
+    }
 
     async function handleExportJSON() {
         if (isMobile()) {
-            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy" để tránh mất dữ liệu.');
+            alert('⚠️ Điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
         }
         try {
             var data = await exportAll();
@@ -401,365 +483,337 @@
             var ck = Object.keys(parsed.cookies || {}).length;
             var idb = Object.keys(parsed.indexedDB || {}).length;
 
-            alert('Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\nindexedDB: ' + idb);
+            alert('✅ Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\nindexedDB: ' + idb + '\n\n⚠️ Dữ liệu KHÔNG mã hóa!');
         } catch (e) {
-            alert('Lỗi: ' + e.message);
+            alert('❌ Lỗi: ' + e.message);
         }
     }
 
-    async function handleDownloadJSON() {
+    // === TẤT CẢ - CÓ MÃ HÓA ===
+
+    async function handleDownloadEncrypted() {
+        var password = promptPassword('🔐 TẠO MẬT KHẨU MÃ HÓA');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
+
+        var confirmPass = prompt('🔐 NHẬP LẠI MẬT KHẨU:');
+        if (password !== confirmPass) {
+            alert('❌ Mật khẩu không khớp!');
+            return;
+        }
+
         try {
             var data = await exportAll();
-            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename, 'application/json');
+            var originalSize = data.length;
 
-            var size = (data.length / 1024).toFixed(1);
-            alert('Đã tải file: ' + filename + '\nKích thước: ' + size + ' KB');
+            var encrypted = await encrypt(data, password);
+            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename, 'application/octet-stream');
+
+            var ratio = ((1 - encrypted.length / originalSize) * 100).toFixed(1);
+            alert('✅ Đã tải file mã hóa!\n\n🔐 ' + filename + '\n📦 Gốc: ' + (originalSize / 1024).toFixed(1) + ' KB\n📦 Nén+Mã hóa: ' + (encrypted.length / 1024).toFixed(1) + ' KB\n📉 Giảm: ' + ratio + '%\n\n⚠️ NHỚ MẬT KHẨU!');
         } catch (e) {
-            alert('Lỗi: ' + e.message);
+            alert('❌ Lỗi: ' + e.message);
         }
     }
 
-    async function handleDownloadGzip() {
+    async function handleExportEncryptedBase64() {
+        if (isMobile()) {
+            alert('⚠️ Điện thoại!\n\nNên dùng "Tải File .enc" thay vì "Copy".');
+        }
+
+        var password = promptPassword('🔐 TẠO MẬT KHẨU MÃ HÓA');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
+
+        var confirmPass = prompt('🔐 NHẬP LẠI MẬT KHẨU:');
+        if (password !== confirmPass) {
+            alert('❌ Mật khẩu không khớp!');
+            return;
+        }
+
         try {
-            var jsonData = await exportAll();
-            var originalSize = jsonData.length;
+            var data = await exportAll();
+            var encrypted = await encrypt(data, password);
+            var base64 = uint8ArrayToBase64(encrypted);
 
-            var compressed = await compressGzip(jsonData);
-            if (!compressed) {
-                alert('Trình duyệt không hỗ trợ nén GZIP!\n\nDùng "Tải JSON" thay thế.');
-                return;
-            }
-
-            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.gz';
-            downloadFile(compressed, filename, 'application/gzip');
-
-            var compressedSize = compressed.length;
-            var ratio = ((1 - compressedSize / originalSize) * 100).toFixed(1);
-
-            alert('Đã tải file: ' + filename + '\n\nGốc: ' + (originalSize / 1024).toFixed(1) + ' KB\nNén: ' + (compressedSize / 1024).toFixed(1) + ' KB\nGiảm: ' + ratio + '%');
+            GM_setClipboard(base64);
+            alert('✅ Đã copy dữ liệu mã hóa (Base64)!\n\n📦 Kích thước: ' + (base64.length / 1024).toFixed(1) + ' KB\n\n⚠️ NHỚ MẬT KHẨU!');
         } catch (e) {
-            alert('Lỗi: ' + e.message);
+            alert('❌ Lỗi: ' + e.message);
         }
     }
 
-    async function handleImport() {
-        var input = prompt('Dán dữ liệu storage (JSON):');
+    // === NHẬP ===
+
+    async function handleImportJSON() {
+        var input = prompt('📥 Dán dữ liệu JSON:');
         if (!input) return;
 
-        var result = await importFromData(input.trim());
+        var result = await importFromJSON(input.trim());
 
         if (result.success) {
-            if (confirm('Nhập thành công! ' + result.total + ' items\n\nReload trang?')) {
+            if (confirm('✅ Nhập thành công!\n\n📊 ' + result.total + ' items\n\n🔄 Reload trang?')) {
                 location.reload();
             }
         } else {
-            alert('Lỗi: ' + result.error);
+            alert('❌ Lỗi: ' + result.error);
+        }
+    }
+
+    async function handleImportEncryptedBase64() {
+        var input = prompt('📥 Dán dữ liệu mã hóa (Base64):');
+        if (!input) return;
+
+        var password = prompt('🔐 NHẬP MẬT KHẨU GIẢI MÃ:');
+        if (!password) return;
+
+        try {
+            var encrypted = base64ToUint8Array(input.trim());
+            var decrypted = await decrypt(encrypted, password);
+            var result = await importFromJSON(decrypted);
+
+            if (result.success) {
+                if (confirm('✅ Giải mã & nhập thành công!\n\n📊 ' + result.total + ' items\n\n🔄 Reload trang?')) {
+                    location.reload();
+                }
+            } else {
+                alert('❌ Lỗi: ' + result.error);
+            }
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
         }
     }
 
     function handleImportFromFile() {
         pickAndReadFile(async function(content, filename) {
-            var result;
-            if (filename.endsWith('.gz')) {
-                result = await importFromData(new Uint8Array(content));
-            } else {
-                result = await importFromData(content);
-            }
+            try {
+                if (filename.endsWith('.enc')) {
+                    var password = prompt('🔐 NHẬP MẬT KHẨU GIẢI MÃ:');
+                    if (!password) return;
 
-            if (result.success) {
-                if (confirm('Nhập thành công! ' + result.total + ' items\n\nReload trang?')) {
-                    location.reload();
+                    var decrypted = await decrypt(new Uint8Array(content), password);
+                    var result = await importFromJSON(decrypted);
+
+                    if (result.success) {
+                        if (confirm('✅ Giải mã & nhập thành công!\n\n📊 ' + result.total + ' items\n\n🔄 Reload trang?')) {
+                            location.reload();
+                        }
+                    } else {
+                        alert('❌ Lỗi: ' + result.error);
+                    }
+                } else {
+                    var result = await importFromJSON(content);
+
+                    if (result.success) {
+                        if (confirm('✅ Nhập thành công!\n\n📊 ' + result.total + ' items\n\n🔄 Reload trang?')) {
+                            location.reload();
+                        }
+                    } else {
+                        alert('❌ Lỗi: ' + result.error);
+                    }
                 }
-            } else {
-                alert('Lỗi: ' + result.error);
+            } catch (e) {
+                alert('❌ Lỗi: ' + e.message);
             }
         });
     }
 
-    // === LOCALSTORAGE ===
-
-    function handleExportLocalStorage() {
-        if (isMobile()) {
-            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
-        }
-        var data = JSON.stringify(exportLocalStorage(), null, 2);
-        GM_setClipboard(data);
-        alert('Đã copy localStorage (' + Object.keys(JSON.parse(data)).length + ' keys)');
-    }
+    // === RIÊNG TỪNG LOẠI - KHÔNG MÃ HÓA ===
 
     function handleDownloadLocalStorage() {
         var data = JSON.stringify(exportLocalStorage(), null, 2);
         var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.json';
         downloadFile(data, filename, 'application/json');
-        alert('Đã tải file: ' + filename);
-    }
-
-    async function handleDownloadLocalStorageGzip() {
-        try {
-            var jsonData = JSON.stringify(exportLocalStorage(), null, 2);
-            var compressed = await compressGzip(jsonData);
-            if (!compressed) {
-                alert('Trình duyệt không hỗ trợ nén GZIP!');
-                return;
-            }
-            var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.gz';
-            downloadFile(compressed, filename, 'application/gzip');
-            alert('Đã tải file: ' + filename);
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    function handleImportLocalStorage() {
-        var input = prompt('Dán dữ liệu localStorage (JSON):');
-        if (!input) return;
-
-        try {
-            var data = JSON.parse(input.trim());
-            var count = importLocalStorage(data);
-            if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
-                location.reload();
-            }
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    function handleImportLocalStorageFromFile() {
-        pickAndReadFile(async function(content, filename) {
-            try {
-                var data;
-                if (filename.endsWith('.gz')) {
-                    var jsonStr = await decompressGzip(new Uint8Array(content));
-                    data = JSON.parse(jsonStr);
-                } else {
-                    data = JSON.parse(content);
-                }
-                var count = importLocalStorage(data);
-                if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
-                    location.reload();
-                }
-            } catch (e) {
-                alert('Lỗi: ' + e.message);
-            }
-        });
-    }
-
-    // === SESSIONSTORAGE ===
-
-    function handleExportSessionStorage() {
-        if (isMobile()) {
-            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
-        }
-        var data = JSON.stringify(exportSessionStorage(), null, 2);
-        GM_setClipboard(data);
-        alert('Đã copy sessionStorage (' + Object.keys(JSON.parse(data)).length + ' keys)');
+        alert('✅ Đã tải: ' + filename);
     }
 
     function handleDownloadSessionStorage() {
         var data = JSON.stringify(exportSessionStorage(), null, 2);
         var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.json';
         downloadFile(data, filename, 'application/json');
-        alert('Đã tải file: ' + filename);
-    }
-
-    async function handleDownloadSessionStorageGzip() {
-        try {
-            var jsonData = JSON.stringify(exportSessionStorage(), null, 2);
-            var compressed = await compressGzip(jsonData);
-            if (!compressed) {
-                alert('Trình duyệt không hỗ trợ nén GZIP!');
-                return;
-            }
-            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.gz';
-            downloadFile(compressed, filename, 'application/gzip');
-            alert('Đã tải file: ' + filename);
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    function handleImportSessionStorage() {
-        var input = prompt('Dán dữ liệu sessionStorage (JSON):');
-        if (!input) return;
-
-        try {
-            var data = JSON.parse(input.trim());
-            var count = importSessionStorage(data);
-            if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
-                location.reload();
-            }
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    function handleImportSessionStorageFromFile() {
-        pickAndReadFile(async function(content, filename) {
-            try {
-                var data;
-                if (filename.endsWith('.gz')) {
-                    var jsonStr = await decompressGzip(new Uint8Array(content));
-                    data = JSON.parse(jsonStr);
-                } else {
-                    data = JSON.parse(content);
-                }
-                var count = importSessionStorage(data);
-                if (confirm('Đã nhập ' + count + ' keys!\n\nReload trang?')) {
-                    location.reload();
-                }
-            } catch (e) {
-                alert('Lỗi: ' + e.message);
-            }
-        });
-    }
-
-    // === COOKIES ===
-
-    function handleExportCookies() {
-        if (isMobile()) {
-            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
-        }
-        var data = JSON.stringify(exportCookies(), null, 2);
-        GM_setClipboard(data);
-        alert('Đã copy cookies (' + Object.keys(JSON.parse(data)).length + ')');
+        alert('✅ Đã tải: ' + filename);
     }
 
     function handleDownloadCookies() {
         var data = JSON.stringify(exportCookies(), null, 2);
         var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
         downloadFile(data, filename, 'application/json');
-        alert('Đã tải file: ' + filename);
+        alert('✅ Đã tải: ' + filename);
     }
 
-    async function handleDownloadCookiesGzip() {
+    async function handleDownloadIndexedDB() {
+        var data = await exportIndexedDB();
+        var jsonStr = JSON.stringify(data, null, 2);
+        var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(jsonStr, filename, 'application/json');
+        alert('✅ Đã tải: ' + filename);
+    }
+
+    // === RIÊNG TỪNG LOẠI - CÓ MÃ HÓA ===
+
+    async function handleDownloadLocalStorageEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU CHO LOCALSTORAGE');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
+
         try {
-            var jsonData = JSON.stringify(exportCookies(), null, 2);
-            var compressed = await compressGzip(jsonData);
-            if (!compressed) {
-                alert('Trình duyệt không hỗ trợ nén GZIP!');
-                return;
-            }
-            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.gz';
-            downloadFile(compressed, filename, 'application/gzip');
-            alert('Đã tải file: ' + filename);
+            var data = JSON.stringify(exportLocalStorage());
+            var encrypted = await encrypt(data, password);
+            var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
         } catch (e) {
-            alert('Lỗi: ' + e.message);
+            alert('❌ Lỗi: ' + e.message);
         }
     }
 
-    function handleImportCookies() {
-        var input = prompt('Dán dữ liệu cookies (JSON):');
-        if (!input) return;
+    async function handleDownloadSessionStorageEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU CHO SESSIONSTORAGE');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
 
         try {
-            var data = JSON.parse(input.trim());
-            var count = importCookies(data);
-            if (confirm('Đã nhập ' + count + ' cookies!\n\nReload trang?')) {
-                location.reload();
-            }
+            var data = JSON.stringify(exportSessionStorage());
+            var encrypted = await encrypt(data, password);
+            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
         } catch (e) {
-            alert('Lỗi: ' + e.message);
+            alert('❌ Lỗi: ' + e.message);
         }
+    }
+
+    async function handleDownloadCookiesEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU CHO COOKIES');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
+
+        try {
+            var data = JSON.stringify(exportCookies());
+            var encrypted = await encrypt(data, password);
+            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
+    }
+
+    async function handleDownloadIndexedDBEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU CHO INDEXEDDB');
+        if (!password || password.length < 4) {
+            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
+            return;
+        }
+
+        try {
+            var data = JSON.stringify(await exportIndexedDB());
+            var encrypted = await encrypt(data, password);
+            var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
+    }
+
+    // === NHẬP RIÊNG TỪNG LOẠI ===
+
+    function handleImportLocalStorageFromFile() {
+        pickAndReadFile(async function(content, filename) {
+            try {
+                var data;
+                if (filename.endsWith('.enc')) {
+                    var password = prompt('🔐 NHẬP MẬT KHẨU:');
+                    if (!password) return;
+                    var decrypted = await decrypt(new Uint8Array(content), password);
+                    data = JSON.parse(decrypted);
+                } else {
+                    data = JSON.parse(content);
+                }
+                var count = importLocalStorage(data);
+                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload trang?')) {
+                    location.reload();
+                }
+            } catch (e) {
+                alert('❌ Lỗi: ' + e.message);
+            }
+        });
+    }
+
+    function handleImportSessionStorageFromFile() {
+        pickAndReadFile(async function(content, filename) {
+            try {
+                var data;
+                if (filename.endsWith('.enc')) {
+                    var password = prompt('🔐 NHẬP MẬT KHẨU:');
+                    if (!password) return;
+                    var decrypted = await decrypt(new Uint8Array(content), password);
+                    data = JSON.parse(decrypted);
+                } else {
+                    data = JSON.parse(content);
+                }
+                var count = importSessionStorage(data);
+                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload trang?')) {
+                    location.reload();
+                }
+            } catch (e) {
+                alert('❌ Lỗi: ' + e.message);
+            }
+        });
     }
 
     function handleImportCookiesFromFile() {
         pickAndReadFile(async function(content, filename) {
             try {
                 var data;
-                if (filename.endsWith('.gz')) {
-                    var jsonStr = await decompressGzip(new Uint8Array(content));
-                    data = JSON.parse(jsonStr);
+                if (filename.endsWith('.enc')) {
+                    var password = prompt('🔐 NHẬP MẬT KHẨU:');
+                    if (!password) return;
+                    var decrypted = await decrypt(new Uint8Array(content), password);
+                    data = JSON.parse(decrypted);
                 } else {
                     data = JSON.parse(content);
                 }
                 var count = importCookies(data);
-                if (confirm('Đã nhập ' + count + ' cookies!\n\nReload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' cookies!\n\n🔄 Reload trang?')) {
                     location.reload();
                 }
             } catch (e) {
-                alert('Lỗi: ' + e.message);
+                alert('❌ Lỗi: ' + e.message);
             }
         });
-    }
-
-    // === INDEXEDDB ===
-
-    async function handleExportIndexedDB() {
-        if (isMobile()) {
-            alert('⚠️ Bạn đang dùng điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
-        }
-        try {
-            var data = await exportIndexedDB();
-            var jsonStr = JSON.stringify(data, null, 2);
-            GM_setClipboard(jsonStr);
-            alert('Đã copy IndexedDB (' + Object.keys(data).length + ' databases)');
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleDownloadIndexedDB() {
-        try {
-            var data = await exportIndexedDB();
-            var jsonStr = JSON.stringify(data, null, 2);
-            var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(jsonStr, filename, 'application/json');
-            alert('Đã tải file: ' + filename);
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleDownloadIndexedDBGzip() {
-        try {
-            var data = await exportIndexedDB();
-            var jsonStr = JSON.stringify(data, null, 2);
-            var compressed = await compressGzip(jsonStr);
-            if (!compressed) {
-                alert('Trình duyệt không hỗ trợ nén GZIP!');
-                return;
-            }
-            var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.gz';
-            downloadFile(compressed, filename, 'application/gzip');
-            alert('Đã tải file: ' + filename);
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleImportIndexedDB() {
-        var input = prompt('Dán dữ liệu IndexedDB (JSON):');
-        if (!input) return;
-
-        try {
-            var data = JSON.parse(input.trim());
-            var count = await importIndexedDB(data);
-            if (confirm('Đã nhập ' + count + ' records!\n\nReload trang?')) {
-                location.reload();
-            }
-        } catch (e) {
-            alert('Lỗi: ' + e.message);
-        }
     }
 
     function handleImportIndexedDBFromFile() {
         pickAndReadFile(async function(content, filename) {
             try {
                 var data;
-                if (filename.endsWith('.gz')) {
-                    var jsonStr = await decompressGzip(new Uint8Array(content));
-                    data = JSON.parse(jsonStr);
+                if (filename.endsWith('.enc')) {
+                    var password = prompt('🔐 NHẬP MẬT KHẨU:');
+                    if (!password) return;
+                    var decrypted = await decrypt(new Uint8Array(content), password);
+                    data = JSON.parse(decrypted);
                 } else {
                     data = JSON.parse(content);
                 }
                 var count = await importIndexedDB(data);
-                if (confirm('Đã nhập ' + count + ' records!\n\nReload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' records!\n\n🔄 Reload trang?')) {
                     location.reload();
                 }
             } catch (e) {
-                alert('Lỗi: ' + e.message);
+                alert('❌ Lỗi: ' + e.message);
             }
         });
     }
@@ -771,27 +825,27 @@
         var ss = sessionStorage.length;
         var ck = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
 
-        alert('STORAGE: ' + window.location.hostname + '\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck);
+        alert('📊 STORAGE: ' + window.location.hostname + '\n\n📦 localStorage: ' + ls + '\n📋 sessionStorage: ' + ss + '\n🍪 cookies: ' + ck);
     }
 
     function handleClear() {
-        var choice = prompt('Nhập số:\n1 - Xóa localStorage\n2 - Xóa sessionStorage\n3 - Xóa cookies\n4 - Xóa TẤT CẢ\n0 - Hủy');
+        var choice = prompt('🗑️ XÓA STORAGE\n\nNhập số:\n1 - localStorage\n2 - sessionStorage\n3 - cookies\n4 - TẤT CẢ\n0 - Hủy');
 
         if (choice === '1') {
             localStorage.clear();
-            alert('Đã xóa localStorage');
+            alert('✅ Đã xóa localStorage');
         } else if (choice === '2') {
             sessionStorage.clear();
-            alert('Đã xóa sessionStorage');
+            alert('✅ Đã xóa sessionStorage');
         } else if (choice === '3') {
             var cookies = document.cookie.split(';');
             for (var i = 0; i < cookies.length; i++) {
                 var name = cookies[i].split('=')[0].trim();
                 document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
             }
-            alert('Đã xóa cookies');
+            alert('✅ Đã xóa cookies');
         } else if (choice === '4') {
-            if (confirm('Xóa TẤT CẢ storage?')) {
+            if (confirm('⚠️ Xóa TẤT CẢ storage?')) {
                 localStorage.clear();
                 sessionStorage.clear();
                 var cookies = document.cookie.split(';');
@@ -799,7 +853,7 @@
                     var name = cookies[i].split('=')[0].trim();
                     document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
                 }
-                alert('Đã xóa tất cả!');
+                alert('✅ Đã xóa tất cả!');
             }
         }
     }
@@ -807,7 +861,7 @@
     // ==================== MENU COMMANDS ====================
 
     GM_registerMenuCommand('💾 Tải JSON', handleDownloadJSON);
-    GM_registerMenuCommand('🗜️ Tải GZIP', handleDownloadGzip);
+    GM_registerMenuCommand('🔐 Tải Mã Hóa (.enc)', handleDownloadEncrypted);
     GM_registerMenuCommand('📂 Nhập File', handleImportFromFile);
     GM_registerMenuCommand('👁️ Xem Storage', handleView);
     GM_registerMenuCommand('🗑️ Xóa Storage', handleClear);
@@ -847,7 +901,7 @@
                 z-index: 2147483646;\
                 box-shadow: 0 5px 25px rgba(0,0,0,0.5);\
                 display: none;\
-                min-width: 240px;\
+                min-width: 250px;\
                 max-height: 85vh;\
                 overflow-y: auto;\
             }\
@@ -872,6 +926,9 @@
             }\
             #sb-menu button.warn {\
                 color: #ffaa00;\
+            }\
+            #sb-menu button.secure {\
+                color: #44ff88;\
             }\
             .sb-menu-divider {\
                 height: 1px;\
@@ -905,40 +962,38 @@
         var menuData = [
             { warning: isMobile() ? '📱 Điện thoại - Nên tải file!' : null },
 
-            { title: '📦 TẤT CẢ STORAGE' },
+            { title: '🔐 XUẤT MÃ HÓA (AN TOÀN)' },
+            { text: '🔐 Tải File .enc (Nén+Mã hóa)', action: handleDownloadEncrypted, secure: true },
+            { text: '🔐 Copy Base64 (⚠️PC)', action: handleExportEncryptedBase64, secure: true },
+
+            { title: '📦 XUẤT KHÔNG MÃ HÓA' },
             { text: '💾 Tải JSON', action: handleDownloadJSON },
-            { text: '🗜️ Tải GZIP (nén nhỏ)', action: handleDownloadGzip },
             { text: '📤 Copy JSON (⚠️PC)', action: handleExportJSON, warn: true },
-            { text: '📂 Nhập từ File (.json/.gz)', action: handleImportFromFile },
-            { text: '📥 Nhập từ Paste', action: handleImport },
+
+            { title: '📥 NHẬP' },
+            { text: '📂 Nhập từ File (.json/.enc)', action: handleImportFromFile },
+            { text: '📥 Nhập JSON (Paste)', action: handleImportJSON },
+            { text: '🔐 Nhập Mã hóa Base64 (Paste)', action: handleImportEncryptedBase64 },
 
             { title: '📦 LOCALSTORAGE' },
             { text: '💾 Tải JSON', action: handleDownloadLocalStorage },
-            { text: '🗜️ Tải GZIP', action: handleDownloadLocalStorageGzip },
-            { text: '📤 Copy (⚠️PC)', action: handleExportLocalStorage, warn: true },
-            { text: '📂 Nhập từ File', action: handleImportLocalStorageFromFile },
-            { text: '📥 Nhập từ Paste', action: handleImportLocalStorage },
+            { text: '🔐 Tải .enc', action: handleDownloadLocalStorageEnc, secure: true },
+            { text: '📂 Nhập File', action: handleImportLocalStorageFromFile },
 
             { title: '📋 SESSIONSTORAGE' },
             { text: '💾 Tải JSON', action: handleDownloadSessionStorage },
-            { text: '🗜️ Tải GZIP', action: handleDownloadSessionStorageGzip },
-            { text: '📤 Copy (⚠️PC)', action: handleExportSessionStorage, warn: true },
-            { text: '📂 Nhập từ File', action: handleImportSessionStorageFromFile },
-            { text: '📥 Nhập từ Paste', action: handleImportSessionStorage },
+            { text: '🔐 Tải .enc', action: handleDownloadSessionStorageEnc, secure: true },
+            { text: '📂 Nhập File', action: handleImportSessionStorageFromFile },
 
             { title: '🍪 COOKIES' },
             { text: '💾 Tải JSON', action: handleDownloadCookies },
-            { text: '🗜️ Tải GZIP', action: handleDownloadCookiesGzip },
-            { text: '📤 Copy (⚠️PC)', action: handleExportCookies, warn: true },
-            { text: '📂 Nhập từ File', action: handleImportCookiesFromFile },
-            { text: '📥 Nhập từ Paste', action: handleImportCookies },
+            { text: '🔐 Tải .enc', action: handleDownloadCookiesEnc, secure: true },
+            { text: '📂 Nhập File', action: handleImportCookiesFromFile },
 
             { title: '🗄️ INDEXEDDB' },
             { text: '💾 Tải JSON', action: handleDownloadIndexedDB },
-            { text: '🗜️ Tải GZIP', action: handleDownloadIndexedDBGzip },
-            { text: '📤 Copy (⚠️PC)', action: handleExportIndexedDB, warn: true },
-            { text: '📂 Nhập từ File', action: handleImportIndexedDBFromFile },
-            { text: '📥 Nhập từ Paste', action: handleImportIndexedDB },
+            { text: '🔐 Tải .enc', action: handleDownloadIndexedDBEnc, secure: true },
+            { text: '📂 Nhập File', action: handleImportIndexedDBFromFile },
 
             { title: '⚙️ KHÁC' },
             { text: '👁️ Xem Storage', action: handleView },
@@ -966,6 +1021,8 @@
                 menuBtn.textContent = item.text;
                 if (item.warn) {
                     menuBtn.className = 'warn';
+                } else if (item.secure) {
+                    menuBtn.className = 'secure';
                 }
                 (function(action) {
                     menuBtn.onclick = function() {
@@ -1069,14 +1126,14 @@
             var left = rect.left;
             var top = rect.bottom + 10;
 
-            if (left + 240 > window.innerWidth) {
-                left = window.innerWidth - 250;
+            if (left + 250 > window.innerWidth) {
+                left = window.innerWidth - 260;
             }
             if (left < 10) {
                 left = 10;
             }
-            if (top + 550 > window.innerHeight) {
-                top = rect.top - 560;
+            if (top + 600 > window.innerHeight) {
+                top = rect.top - 610;
             }
             if (top < 10) {
                 top = 10;
@@ -1112,7 +1169,7 @@
 
         try {
             createFloatingUI();
-            console.log('💾 Storage Backup v2.6 Ready');
+            console.log('💾 Storage Backup v3.0 Ready');
         } catch (e) {
             console.error('Storage Backup error:', e);
         }
