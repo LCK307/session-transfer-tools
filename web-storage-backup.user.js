@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Web Storage Backup & Restore
-// @namespace    https://github.com/YourUsername/web-storage-backup
+// @namespace    https://github.com/LCK307/web-storage-backup
 // @version      2.6
 // @description  Xuất/Nhập localStorage, cookies, sessionStorage, IndexedDB với nén GZIP
-// @author       Your Name
+// @author       LCK307
 // @match        *://*/*
 // @grant        GM_setClipboard
 // @grant        GM_registerMenuCommand
