@@ -23,12 +23,10 @@
         return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     }
 
-    // ==================== LZMA COMPRESSION ====================
-    // Simplified LZMA-like compression using built-in CompressionStream with fallback
+    // ==================== COMPRESSION ====================
 
     async function compress(data) {
         try {
-            // Thử dùng gzip trước (hỗ trợ tốt hơn)
             if (typeof CompressionStream !== 'undefined') {
                 var encoder = new TextEncoder();
                 var inputData = encoder.encode(data);
@@ -42,7 +40,6 @@
         } catch (e) {
             console.warn('Compression not supported:', e);
         }
-        // Fallback: trả về raw bytes
         var encoder = new TextEncoder();
         return encoder.encode(data);
     }
@@ -59,9 +56,8 @@
                 return decoder.decode(decompressedData);
             }
         } catch (e) {
-            console.warn('Decompression failed, trying raw:', e);
+            console.warn('Decompression failed:', e);
         }
-        // Fallback: thử decode raw
         var decoder = new TextDecoder();
         return decoder.decode(compressedData);
     }
@@ -98,26 +94,17 @@
 
     async function encrypt(data, password) {
         try {
-            var encoder = new TextEncoder();
-
-            // Nén trước
             var compressed = await compress(data);
-
-            // Tạo salt và IV ngẫu nhiên
             var salt = crypto.getRandomValues(new Uint8Array(16));
             var iv = crypto.getRandomValues(new Uint8Array(12));
-
-            // Derive key từ password
             var key = await deriveKey(password, salt);
 
-            // Mã hóa
             var encrypted = await crypto.subtle.encrypt(
                 { name: 'AES-GCM', iv: iv },
                 key,
                 compressed
             );
 
-            // Kết hợp: salt (16) + iv (12) + encrypted data
             var result = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
             result.set(salt, 0);
             result.set(iv, salt.length);
@@ -125,44 +112,34 @@
 
             return result;
         } catch (e) {
-            console.error('Encryption error:', e);
             throw new Error('Mã hóa thất bại: ' + e.message);
         }
     }
 
     async function decrypt(encryptedData, password) {
         try {
-            // Tách salt, iv, và encrypted data
             var salt = encryptedData.slice(0, 16);
             var iv = encryptedData.slice(16, 28);
             var data = encryptedData.slice(28);
 
-            // Derive key từ password
             var key = await deriveKey(password, salt);
 
-            // Giải mã
             var decrypted = await crypto.subtle.decrypt(
                 { name: 'AES-GCM', iv: iv },
                 key,
                 data
             );
 
-            // Giải nén
             var decompressed = await decompress(new Uint8Array(decrypted));
-
             return decompressed;
         } catch (e) {
-            console.error('Decryption error:', e);
             throw new Error('Sai mật khẩu hoặc dữ liệu bị hỏng');
         }
     }
 
-    // ==================== BASE64 HELPERS ====================
-
     function uint8ArrayToBase64(uint8Array) {
         var binary = '';
-        var len = uint8Array.byteLength;
-        for (var i = 0; i < len; i++) {
+        for (var i = 0; i < uint8Array.length; i++) {
             binary += String.fromCharCode(uint8Array[i]);
         }
         return btoa(binary);
@@ -170,9 +147,8 @@
 
     function base64ToUint8Array(base64) {
         var binary = atob(base64);
-        var len = binary.length;
-        var uint8Array = new Uint8Array(len);
-        for (var i = 0; i < len; i++) {
+        var uint8Array = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) {
             uint8Array[i] = binary.charCodeAt(i);
         }
         return uint8Array;
@@ -454,45 +430,9 @@
 
     // ==================== ACTION HANDLERS ====================
 
-    // === TẤT CẢ - KHÔNG MÃ HÓA ===
-
-    async function handleDownloadJSON() {
-        try {
-            var data = await exportAll();
-            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
-            downloadFile(data, filename, 'application/json');
-
-            var size = (data.length / 1024).toFixed(1);
-            alert('✅ Đã tải file!\n\n📄 ' + filename + '\n📦 Kích thước: ' + size + ' KB\n\n⚠️ File KHÔNG mã hóa!');
-        } catch (e) {
-            alert('❌ Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleExportJSON() {
-        if (isMobile()) {
-            alert('⚠️ Điện thoại!\n\nNên dùng "Tải File" thay vì "Copy".');
-        }
-        try {
-            var data = await exportAll();
-            GM_setClipboard(data);
-
-            var parsed = JSON.parse(data);
-            var ls = Object.keys(parsed.localStorage || {}).length;
-            var ss = Object.keys(parsed.sessionStorage || {}).length;
-            var ck = Object.keys(parsed.cookies || {}).length;
-            var idb = Object.keys(parsed.indexedDB || {}).length;
-
-            alert('✅ Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\nindexedDB: ' + idb + '\n\n⚠️ Dữ liệu KHÔNG mã hóa!');
-        } catch (e) {
-            alert('❌ Lỗi: ' + e.message);
-        }
-    }
-
-    // === TẤT CẢ - CÓ MÃ HÓA ===
-
+    // Tất cả - Mã hóa
     async function handleDownloadEncrypted() {
-        var password = promptPassword('🔐 TẠO MẬT KHẨU MÃ HÓA');
+        var password = promptPassword('🔐 TẠO MẬT KHẨU');
         if (!password || password.length < 4) {
             alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
             return;
@@ -507,13 +447,12 @@
         try {
             var data = await exportAll();
             var originalSize = data.length;
-
             var encrypted = await encrypt(data, password);
             var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.enc';
-            downloadFile(encrypted, filename, 'application/octet-stream');
+            downloadFile(encrypted, filename);
 
             var ratio = ((1 - encrypted.length / originalSize) * 100).toFixed(1);
-            alert('✅ Đã tải file mã hóa!\n\n🔐 ' + filename + '\n📦 Gốc: ' + (originalSize / 1024).toFixed(1) + ' KB\n📦 Nén+Mã hóa: ' + (encrypted.length / 1024).toFixed(1) + ' KB\n📉 Giảm: ' + ratio + '%\n\n⚠️ NHỚ MẬT KHẨU!');
+            alert('✅ Đã tải!\n\n📄 ' + filename + '\n📦 Gốc: ' + (originalSize / 1024).toFixed(1) + ' KB\n🔐 Nén+Mã hóa: ' + (encrypted.length / 1024).toFixed(1) + ' KB\n📉 Giảm: ' + ratio + '%');
         } catch (e) {
             alert('❌ Lỗi: ' + e.message);
         }
@@ -521,10 +460,10 @@
 
     async function handleExportEncryptedBase64() {
         if (isMobile()) {
-            alert('⚠️ Điện thoại!\n\nNên dùng "Tải File .enc" thay vì "Copy".');
+            alert('⚠️ Điện thoại - Nên dùng "Tải File .enc"!');
         }
 
-        var password = promptPassword('🔐 TẠO MẬT KHẨU MÃ HÓA');
+        var password = promptPassword('🔐 TẠO MẬT KHẨU');
         if (!password || password.length < 4) {
             alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
             return;
@@ -540,22 +479,50 @@
             var data = await exportAll();
             var encrypted = await encrypt(data, password);
             var base64 = uint8ArrayToBase64(encrypted);
-
             GM_setClipboard(base64);
-            alert('✅ Đã copy dữ liệu mã hóa (Base64)!\n\n📦 Kích thước: ' + (base64.length / 1024).toFixed(1) + ' KB\n\n⚠️ NHỚ MẬT KHẨU!');
+            alert('✅ Đã copy!\n\n📦 ' + (base64.length / 1024).toFixed(1) + ' KB\n\n⚠️ NHỚ MẬT KHẨU!');
         } catch (e) {
             alert('❌ Lỗi: ' + e.message);
         }
     }
 
-    // === NHẬP ===
+    // Tất cả - Không mã hóa
+    async function handleDownloadJSON() {
+        try {
+            var data = await exportAll();
+            var filename = 'storage-' + window.location.hostname + '-' + Date.now() + '.json';
+            downloadFile(data, filename, 'application/json');
+            alert('✅ Đã tải!\n\n📄 ' + filename + '\n📦 ' + (data.length / 1024).toFixed(1) + ' KB\n\n⚠️ File không mã hóa!');
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
+    }
 
+    async function handleExportJSON() {
+        if (isMobile()) {
+            alert('⚠️ Điện thoại - Nên dùng "Tải File JSON"!');
+        }
+        try {
+            var data = await exportAll();
+            GM_setClipboard(data);
+
+            var parsed = JSON.parse(data);
+            var ls = Object.keys(parsed.localStorage || {}).length;
+            var ss = Object.keys(parsed.sessionStorage || {}).length;
+            var ck = Object.keys(parsed.cookies || {}).length;
+
+            alert('✅ Đã copy!\n\nlocalStorage: ' + ls + '\nsessionStorage: ' + ss + '\ncookies: ' + ck + '\n\n⚠️ Không mã hóa!');
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
+    }
+
+    // Nhập
     async function handleImportJSON() {
         var input = prompt('📥 Dán dữ liệu JSON:');
         if (!input) return;
 
         var result = await importFromJSON(input.trim());
-
         if (result.success) {
             if (confirm('✅ Nhập thành công!\n\n📊 ' + result.total + ' items\n\n🔄 Reload trang?')) {
                 location.reload();
@@ -569,7 +536,7 @@
         var input = prompt('📥 Dán dữ liệu mã hóa (Base64):');
         if (!input) return;
 
-        var password = prompt('🔐 NHẬP MẬT KHẨU GIẢI MÃ:');
+        var password = prompt('🔐 NHẬP MẬT KHẨU:');
         if (!password) return;
 
         try {
@@ -593,7 +560,7 @@
         pickAndReadFile(async function(content, filename) {
             try {
                 if (filename.endsWith('.enc')) {
-                    var password = prompt('🔐 NHẬP MẬT KHẨU GIẢI MÃ:');
+                    var password = prompt('🔐 NHẬP MẬT KHẨU:');
                     if (!password) return;
 
                     var decrypted = await decrypt(new Uint8Array(content), password);
@@ -623,112 +590,28 @@
         });
     }
 
-    // === RIÊNG TỪNG LOẠI - KHÔNG MÃ HÓA ===
-
+    // localStorage
     function handleDownloadLocalStorage() {
         var data = JSON.stringify(exportLocalStorage(), null, 2);
         var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.json';
-        downloadFile(data, filename, 'application/json');
+        downloadFile(data, filename);
         alert('✅ Đã tải: ' + filename);
     }
-
-    function handleDownloadSessionStorage() {
-        var data = JSON.stringify(exportSessionStorage(), null, 2);
-        var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.json';
-        downloadFile(data, filename, 'application/json');
-        alert('✅ Đã tải: ' + filename);
-    }
-
-    function handleDownloadCookies() {
-        var data = JSON.stringify(exportCookies(), null, 2);
-        var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
-        downloadFile(data, filename, 'application/json');
-        alert('✅ Đã tải: ' + filename);
-    }
-
-    async function handleDownloadIndexedDB() {
-        var data = await exportIndexedDB();
-        var jsonStr = JSON.stringify(data, null, 2);
-        var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.json';
-        downloadFile(jsonStr, filename, 'application/json');
-        alert('✅ Đã tải: ' + filename);
-    }
-
-    // === RIÊNG TỪNG LOẠI - CÓ MÃ HÓA ===
 
     async function handleDownloadLocalStorageEnc() {
-        var password = promptPassword('🔐 MẬT KHẨU CHO LOCALSTORAGE');
-        if (!password || password.length < 4) {
-            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
-            return;
-        }
+        var password = promptPassword('🔐 MẬT KHẨU');
+        if (!password || password.length < 4) return;
 
         try {
             var data = JSON.stringify(exportLocalStorage());
             var encrypted = await encrypt(data, password);
             var filename = 'localStorage-' + window.location.hostname + '-' + Date.now() + '.enc';
             downloadFile(encrypted, filename);
-            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
+            alert('✅ Đã tải: ' + filename);
         } catch (e) {
             alert('❌ Lỗi: ' + e.message);
         }
     }
-
-    async function handleDownloadSessionStorageEnc() {
-        var password = promptPassword('🔐 MẬT KHẨU CHO SESSIONSTORAGE');
-        if (!password || password.length < 4) {
-            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
-            return;
-        }
-
-        try {
-            var data = JSON.stringify(exportSessionStorage());
-            var encrypted = await encrypt(data, password);
-            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.enc';
-            downloadFile(encrypted, filename);
-            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
-        } catch (e) {
-            alert('❌ Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleDownloadCookiesEnc() {
-        var password = promptPassword('🔐 MẬT KHẨU CHO COOKIES');
-        if (!password || password.length < 4) {
-            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
-            return;
-        }
-
-        try {
-            var data = JSON.stringify(exportCookies());
-            var encrypted = await encrypt(data, password);
-            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.enc';
-            downloadFile(encrypted, filename);
-            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
-        } catch (e) {
-            alert('❌ Lỗi: ' + e.message);
-        }
-    }
-
-    async function handleDownloadIndexedDBEnc() {
-        var password = promptPassword('🔐 MẬT KHẨU CHO INDEXEDDB');
-        if (!password || password.length < 4) {
-            alert('❌ Mật khẩu phải có ít nhất 4 ký tự!');
-            return;
-        }
-
-        try {
-            var data = JSON.stringify(await exportIndexedDB());
-            var encrypted = await encrypt(data, password);
-            var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.enc';
-            downloadFile(encrypted, filename);
-            alert('✅ Đã tải: ' + filename + '\n\n⚠️ NHỚ MẬT KHẨU!');
-        } catch (e) {
-            alert('❌ Lỗi: ' + e.message);
-        }
-    }
-
-    // === NHẬP RIÊNG TỪNG LOẠI ===
 
     function handleImportLocalStorageFromFile() {
         pickAndReadFile(async function(content, filename) {
@@ -743,13 +626,36 @@
                     data = JSON.parse(content);
                 }
                 var count = importLocalStorage(data);
-                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload?')) {
                     location.reload();
                 }
             } catch (e) {
                 alert('❌ Lỗi: ' + e.message);
             }
         });
+    }
+
+    // sessionStorage
+    function handleDownloadSessionStorage() {
+        var data = JSON.stringify(exportSessionStorage(), null, 2);
+        var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(data, filename);
+        alert('✅ Đã tải: ' + filename);
+    }
+
+    async function handleDownloadSessionStorageEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU');
+        if (!password || password.length < 4) return;
+
+        try {
+            var data = JSON.stringify(exportSessionStorage());
+            var encrypted = await encrypt(data, password);
+            var filename = 'sessionStorage-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename);
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
     }
 
     function handleImportSessionStorageFromFile() {
@@ -765,13 +671,36 @@
                     data = JSON.parse(content);
                 }
                 var count = importSessionStorage(data);
-                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' keys!\n\n🔄 Reload?')) {
                     location.reload();
                 }
             } catch (e) {
                 alert('❌ Lỗi: ' + e.message);
             }
         });
+    }
+
+    // Cookies
+    function handleDownloadCookies() {
+        var data = JSON.stringify(exportCookies(), null, 2);
+        var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(data, filename);
+        alert('✅ Đã tải: ' + filename);
+    }
+
+    async function handleDownloadCookiesEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU');
+        if (!password || password.length < 4) return;
+
+        try {
+            var data = JSON.stringify(exportCookies());
+            var encrypted = await encrypt(data, password);
+            var filename = 'cookies-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename);
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
     }
 
     function handleImportCookiesFromFile() {
@@ -787,13 +716,37 @@
                     data = JSON.parse(content);
                 }
                 var count = importCookies(data);
-                if (confirm('✅ Đã nhập ' + count + ' cookies!\n\n🔄 Reload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' cookies!\n\n🔄 Reload?')) {
                     location.reload();
                 }
             } catch (e) {
                 alert('❌ Lỗi: ' + e.message);
             }
         });
+    }
+
+    // IndexedDB
+    async function handleDownloadIndexedDB() {
+        var data = await exportIndexedDB();
+        var jsonStr = JSON.stringify(data, null, 2);
+        var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.json';
+        downloadFile(jsonStr, filename);
+        alert('✅ Đã tải: ' + filename);
+    }
+
+    async function handleDownloadIndexedDBEnc() {
+        var password = promptPassword('🔐 MẬT KHẨU');
+        if (!password || password.length < 4) return;
+
+        try {
+            var data = JSON.stringify(await exportIndexedDB());
+            var encrypted = await encrypt(data, password);
+            var filename = 'indexedDB-' + window.location.hostname + '-' + Date.now() + '.enc';
+            downloadFile(encrypted, filename);
+            alert('✅ Đã tải: ' + filename);
+        } catch (e) {
+            alert('❌ Lỗi: ' + e.message);
+        }
     }
 
     function handleImportIndexedDBFromFile() {
@@ -809,7 +762,7 @@
                     data = JSON.parse(content);
                 }
                 var count = await importIndexedDB(data);
-                if (confirm('✅ Đã nhập ' + count + ' records!\n\n🔄 Reload trang?')) {
+                if (confirm('✅ Đã nhập ' + count + ' records!\n\n🔄 Reload?')) {
                     location.reload();
                 }
             } catch (e) {
@@ -818,18 +771,16 @@
         });
     }
 
-    // === KHÁC ===
-
+    // Khác
     function handleView() {
         var ls = localStorage.length;
         var ss = sessionStorage.length;
         var ck = document.cookie.split(';').filter(function(c) { return c.trim(); }).length;
-
-        alert('📊 STORAGE: ' + window.location.hostname + '\n\n📦 localStorage: ' + ls + '\n📋 sessionStorage: ' + ss + '\n🍪 cookies: ' + ck);
+        alert('📊 ' + window.location.hostname + '\n\n📦 localStorage: ' + ls + '\n📋 sessionStorage: ' + ss + '\n🍪 cookies: ' + ck);
     }
 
     function handleClear() {
-        var choice = prompt('🗑️ XÓA STORAGE\n\nNhập số:\n1 - localStorage\n2 - sessionStorage\n3 - cookies\n4 - TẤT CẢ\n0 - Hủy');
+        var choice = prompt('🗑️ XÓA\n\n1 - localStorage\n2 - sessionStorage\n3 - cookies\n4 - TẤT CẢ\n0 - Hủy');
 
         if (choice === '1') {
             localStorage.clear();
@@ -845,7 +796,7 @@
             }
             alert('✅ Đã xóa cookies');
         } else if (choice === '4') {
-            if (confirm('⚠️ Xóa TẤT CẢ storage?')) {
+            if (confirm('⚠️ Xóa TẤT CẢ?')) {
                 localStorage.clear();
                 sessionStorage.clear();
                 var cookies = document.cookie.split(';');
@@ -853,18 +804,16 @@
                     var name = cookies[i].split('=')[0].trim();
                     document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
                 }
-                alert('✅ Đã xóa tất cả!');
+                alert('✅ Đã xóa!');
             }
         }
     }
 
     // ==================== MENU COMMANDS ====================
 
-    GM_registerMenuCommand('💾 Tải JSON', handleDownloadJSON);
-    GM_registerMenuCommand('🔐 Tải Mã Hóa (.enc)', handleDownloadEncrypted);
-    GM_registerMenuCommand('📂 Nhập File', handleImportFromFile);
-    GM_registerMenuCommand('👁️ Xem Storage', handleView);
-    GM_registerMenuCommand('🗑️ Xóa Storage', handleClear);
+    GM_registerMenuCommand('🔐 Tải File Mã Hóa (.enc)', handleDownloadEncrypted);
+    GM_registerMenuCommand('💾 Tải File JSON', handleDownloadJSON);
+    GM_registerMenuCommand('📂 Nhập Từ File', handleImportFromFile);
 
     // ==================== FLOATING UI ====================
 
@@ -886,7 +835,6 @@
                 justify-content: center;\
                 touch-action: none;\
                 user-select: none;\
-                -webkit-user-select: none;\
                 cursor: pointer;\
             }\
             #sb-float-btn.dragging {\
@@ -897,11 +845,11 @@
                 position: fixed;\
                 background: #1e1e2e;\
                 border-radius: 12px;\
-                padding: 6px;\
+                padding: 8px;\
                 z-index: 2147483646;\
                 box-shadow: 0 5px 25px rgba(0,0,0,0.5);\
                 display: none;\
-                min-width: 250px;\
+                min-width: 280px;\
                 max-height: 85vh;\
                 overflow-y: auto;\
             }\
@@ -930,16 +878,12 @@
             #sb-menu button.secure {\
                 color: #44ff88;\
             }\
-            .sb-menu-divider {\
-                height: 1px;\
-                background: #3d3d5d;\
-                margin: 6px 0;\
-            }\
             .sb-menu-title {\
                 color: #888;\
                 font-size: 10px;\
-                padding: 6px 10px 3px;\
+                padding: 8px 10px 4px;\
                 text-transform: uppercase;\
+                font-weight: bold;\
             }\
             .sb-menu-warning {\
                 background: #3d2d1d;\
@@ -959,47 +903,57 @@
         var menu = document.createElement('div');
         menu.id = 'sb-menu';
 
+        // ========== MENU DATA - VIẾT RÕ TỪNG TÍNH NĂNG ==========
         var menuData = [
-            { warning: isMobile() ? '📱 Điện thoại - Nên tải file!' : null },
+            { warning: isMobile() ? '📱 Điện thoại - Nên tải file thay vì copy!' : null },
 
-            { title: '🔐 XUẤT MÃ HÓA (AN TOÀN)' },
-            { text: '🔐 Tải File .enc (Nén+Mã hóa)', action: handleDownloadEncrypted, secure: true },
-            { text: '🔐 Copy Base64 (⚠️PC)', action: handleExportEncryptedBase64, secure: true },
+            // TẤT CẢ - MÃ HÓA
+            { title: '🔐 XUẤT TẤT CẢ (CÓ MÃ HÓA AES-256)' },
+            { text: '🔐 Tải file .enc - Nén + Mã hóa bằng mật khẩu', action: handleDownloadEncrypted, secure: true },
+            { text: '🔐 Copy Base64 mã hóa - Dán được qua chat (⚠️PC)', action: handleExportEncryptedBase64, secure: true },
 
-            { title: '📦 XUẤT KHÔNG MÃ HÓA' },
-            { text: '💾 Tải JSON', action: handleDownloadJSON },
-            { text: '📤 Copy JSON (⚠️PC)', action: handleExportJSON, warn: true },
+            // TẤT CẢ - KHÔNG MÃ HÓA
+            { title: '💾 XUẤT TẤT CẢ (KHÔNG MÃ HÓA)' },
+            { text: '💾 Tải file .json - Đọc được, không cần mật khẩu', action: handleDownloadJSON },
+            { text: '📤 Copy JSON - Dán được qua chat (⚠️PC)', action: handleExportJSON, warn: true },
 
-            { title: '📥 NHẬP' },
-            { text: '📂 Nhập từ File (.json/.enc)', action: handleImportFromFile },
-            { text: '📥 Nhập JSON (Paste)', action: handleImportJSON },
-            { text: '🔐 Nhập Mã hóa Base64 (Paste)', action: handleImportEncryptedBase64 },
+            // NHẬP
+            { title: '📥 NHẬP DỮ LIỆU TỪ FILE HOẶC TEXT' },
+            { text: '📂 Chọn file để nhập (.json hoặc .enc)', action: handleImportFromFile },
+            { text: '📥 Dán JSON từ clipboard', action: handleImportJSON },
+            { text: '🔐 Dán Base64 mã hóa từ clipboard', action: handleImportEncryptedBase64 },
 
-            { title: '📦 LOCALSTORAGE' },
-            { text: '💾 Tải JSON', action: handleDownloadLocalStorage },
-            { text: '🔐 Tải .enc', action: handleDownloadLocalStorageEnc, secure: true },
-            { text: '📂 Nhập File', action: handleImportLocalStorageFromFile },
+            // LOCALSTORAGE
+            { title: '📦 LOCALSTORAGE (Dữ liệu lưu vĩnh viễn)' },
+            { text: '💾 Tải .json - Không mã hóa', action: handleDownloadLocalStorage },
+            { text: '🔐 Tải .enc - Có mã hóa', action: handleDownloadLocalStorageEnc, secure: true },
+            { text: '📂 Nhập từ file', action: handleImportLocalStorageFromFile },
 
-            { title: '📋 SESSIONSTORAGE' },
-            { text: '💾 Tải JSON', action: handleDownloadSessionStorage },
-            { text: '🔐 Tải .enc', action: handleDownloadSessionStorageEnc, secure: true },
-            { text: '📂 Nhập File', action: handleImportSessionStorageFromFile },
+            // SESSIONSTORAGE
+            { title: '📋 SESSIONSTORAGE (Dữ liệu phiên làm việc)' },
+            { text: '💾 Tải .json - Không mã hóa', action: handleDownloadSessionStorage },
+            { text: '🔐 Tải .enc - Có mã hóa', action: handleDownloadSessionStorageEnc, secure: true },
+            { text: '📂 Nhập từ file', action: handleImportSessionStorageFromFile },
 
+            // COOKIES
             { title: '🍪 COOKIES' },
-            { text: '💾 Tải JSON', action: handleDownloadCookies },
-            { text: '🔐 Tải .enc', action: handleDownloadCookiesEnc, secure: true },
-            { text: '📂 Nhập File', action: handleImportCookiesFromFile },
+            { text: '💾 Tải .json - Không mã hóa', action: handleDownloadCookies },
+            { text: '🔐 Tải .enc - Có mã hóa', action: handleDownloadCookiesEnc, secure: true },
+            { text: '📂 Nhập từ file', action: handleImportCookiesFromFile },
 
-            { title: '🗄️ INDEXEDDB' },
-            { text: '💾 Tải JSON', action: handleDownloadIndexedDB },
-            { text: '🔐 Tải .enc', action: handleDownloadIndexedDBEnc, secure: true },
-            { text: '📂 Nhập File', action: handleImportIndexedDBFromFile },
+            // INDEXEDDB
+            { title: '🗄️ INDEXEDDB (Database lớn)' },
+            { text: '💾 Tải .json - Không mã hóa', action: handleDownloadIndexedDB },
+            { text: '🔐 Tải .enc - Có mã hóa', action: handleDownloadIndexedDBEnc, secure: true },
+            { text: '📂 Nhập từ file', action: handleImportIndexedDBFromFile },
 
-            { title: '⚙️ KHÁC' },
-            { text: '👁️ Xem Storage', action: handleView },
-            { text: '🗑️ Xóa Storage', action: handleClear }
+            // TIỆN ÍCH
+            { title: '⚙️ TIỆN ÍCH' },
+            { text: '👁️ Xem số lượng dữ liệu hiện có', action: handleView },
+            { text: '🗑️ Xóa dữ liệu (localStorage/session/cookies)', action: handleClear }
         ];
 
+        // Render menu
         for (var i = 0; i < menuData.length; i++) {
             var item = menuData[i];
             if (item.warning) {
@@ -1012,10 +966,6 @@
                 titleDiv.className = 'sb-menu-title';
                 titleDiv.textContent = item.title;
                 menu.appendChild(titleDiv);
-            } else if (item.divider) {
-                var divider = document.createElement('div');
-                divider.className = 'sb-menu-divider';
-                menu.appendChild(divider);
             } else {
                 var menuBtn = document.createElement('button');
                 menuBtn.textContent = item.text;
@@ -1036,13 +986,9 @@
 
         document.body.appendChild(menu);
 
-        // Drag
-        var startX = 0;
-        var startY = 0;
-        var startLeft = 0;
-        var startTop = 0;
-        var isDragging = false;
-        var hasDragged = false;
+        // ========== DRAG ==========
+        var startX = 0, startY = 0, startLeft = 0, startTop = 0;
+        var isDragging = false, hasDragged = false;
 
         var savedPos = GM_getValue('sb_btn_pos', null);
         if (savedPos) {
@@ -1064,56 +1010,39 @@
             var pos = getPos(e);
             startX = pos.x;
             startY = pos.y;
-
             var rect = btn.getBoundingClientRect();
             startLeft = rect.left;
             startTop = rect.top;
-
             isDragging = true;
             hasDragged = false;
-
             btn.classList.add('dragging');
             e.preventDefault();
         }
 
         function dragMove(e) {
             if (!isDragging) return;
-
             var pos = getPos(e);
             var dx = pos.x - startX;
             var dy = pos.y - startY;
-            var distance = Math.sqrt(dx * dx + dy * dy);
+            if (Math.sqrt(dx * dx + dy * dy) > 10) hasDragged = true;
 
-            if (distance > 10) {
-                hasDragged = true;
-            }
-
-            var newLeft = startLeft + dx;
-            var newTop = startTop + dy;
-
-            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 44));
-            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 44));
+            var newLeft = Math.max(0, Math.min(startLeft + dx, window.innerWidth - 44));
+            var newTop = Math.max(0, Math.min(startTop + dy, window.innerHeight - 44));
 
             btn.style.left = newLeft + 'px';
             btn.style.top = newTop + 'px';
             btn.style.right = 'auto';
             btn.style.bottom = 'auto';
-
             e.preventDefault();
         }
 
-        function dragEnd(e) {
+        function dragEnd() {
             if (!isDragging) return;
-
             isDragging = false;
             btn.classList.remove('dragging');
-
             var rect = btn.getBoundingClientRect();
             GM_setValue('sb_btn_pos', { left: rect.left, top: rect.top });
-
-            if (!hasDragged) {
-                toggleMenu();
-            }
+            if (!hasDragged) toggleMenu();
         }
 
         function toggleMenu() {
@@ -1121,23 +1050,10 @@
                 menu.classList.remove('show');
                 return;
             }
-
             var rect = btn.getBoundingClientRect();
-            var left = rect.left;
+            var left = Math.max(10, Math.min(rect.left, window.innerWidth - 290));
             var top = rect.bottom + 10;
-
-            if (left + 250 > window.innerWidth) {
-                left = window.innerWidth - 260;
-            }
-            if (left < 10) {
-                left = 10;
-            }
-            if (top + 600 > window.innerHeight) {
-                top = rect.top - 610;
-            }
-            if (top < 10) {
-                top = 10;
-            }
+            if (top + 600 > window.innerHeight) top = Math.max(10, rect.top - 610);
 
             menu.style.left = left + 'px';
             menu.style.top = top + 'px';
@@ -1146,8 +1062,7 @@
 
         btn.addEventListener('touchstart', dragStart, { passive: false });
         document.addEventListener('touchmove', dragMove, { passive: false });
-        document.addEventListener('touchend', dragEnd, { passive: false });
-
+        document.addEventListener('touchend', dragEnd);
         btn.addEventListener('mousedown', dragStart);
         document.addEventListener('mousemove', dragMove);
         document.addEventListener('mouseup', dragEnd);
@@ -1166,7 +1081,6 @@
             setTimeout(init, 100);
             return;
         }
-
         try {
             createFloatingUI();
             console.log('💾 Storage Backup v3.0 Ready');
